@@ -1,3 +1,42 @@
+server:
+  port: 8081
+
 spring:
   application:
     name: payment-service
+  threads:
+    virtual:
+      enabled: true
+
+chaosproof:
+  fixtures:
+    enabled: ${CHAOS_FIXTURES_ENABLED:false}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}   # NEVER unset: every ChaosProof query filters on this
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true              # _bucket series for histogram_quantile()
+
+resilience4j:
+  bulkhead:
+    instances:
+      paymentProcessing:                        # NEVER rename: experiments assert on this name
+        maxConcurrentCalls: 25
+        maxWaitDuration: 0
+  ratelimiter:
+    instances:
+      paymentApi:                               # 100 rps, per the plan
+        limitForPeriod: 100
+        limitRefreshPeriod: 1s
+        timeoutDuration: 0

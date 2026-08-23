@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: POSTGRES_DB
+              value: inventory
+            - name: POSTGRES_USER
+              value: chaosproof
+            - name: POSTGRES_PASSWORD
+              value: chaosproof
+          ports:
+            - name: pg
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "chaosproof"]
+            periodSeconds: 5
+          resources:
+            limits: { memory: 256Mi, cpu: 250m }
+            requests: { memory: 128Mi, cpu: 100m }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql   # PG18 image convention: mount the parent, data lands in a subdir
+      volumes:
+        - name: data
+          emptyDir: {}   # demo cluster; the framework's own evidence store is elsewhere
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: pg

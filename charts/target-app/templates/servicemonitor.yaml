@@ -1,0 +1,23 @@
+# 5s scrape on the TARGET APP ONLY — cluster-wide 5s scraping multiplies Prometheus
+# load for no benefit. A 30s recovery SLO cannot be resolved by the 30s chart default:
+# a 30s rate window needs >=2 samples; 5s scrape gives 6 (measurement-integrity skill).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: target-app
+  namespace: {{ .Values.namespace }}
+  labels:
+    chaosproof.io/plane: measurement
+spec:
+  namespaceSelector:
+    matchNames: [{{ .Values.namespace }}]
+  selector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [order-api, payment-service, inventory-service]
+  endpoints:
+    - port: http
+      path: /actuator/prometheus
+      interval: 5s
+      scrapeTimeout: 4s   # must be strictly < interval or Prometheus rejects the config

@@ -1,3 +1,50 @@
+server:
+  port: 8082
+
 spring:
   application:
     name: inventory-service
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/inventory}
+    username: ${DB_USER:chaosproof}
+    password: ${DB_PASSWORD:chaosproof}
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+chaosproof:
+  fixtures:
+    enabled: ${CHAOS_FIXTURES_ENABLED:false}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}   # NEVER unset: every ChaosProof query filters on this
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true              # _bucket series for histogram_quantile()
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      cache:                                    # NEVER rename: experiments assert on this name
+        registerHealthIndicator: true
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+  retry:
+    instances:
+      database:                                 # NEVER rename
+        maxAttempts: 3
+        waitDuration: 200ms

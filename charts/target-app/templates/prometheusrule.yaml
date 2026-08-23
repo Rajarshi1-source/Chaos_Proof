@@ -1,0 +1,65 @@
+# Five alert rules matching the six experiments. `for: 20s` per ruling D-J:
+# irreducible latency = scrape(5s) + evaluation(30s) + for(20s) = 55s <= the 60s
+# alert-latency SLO. A `for: 1m` rule has a 95s floor and can NEVER meet 60s —
+# evals/alert_rule_lint.py (Phase 8) enforces this arithmetic in CI.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: target-app-chaos-alerts
+  namespace: {{ .Values.namespace }}
+  labels:
+    chaosproof.io/plane: measurement
+spec:
+  groups:
+    - name: chaosproof-target-app
+      interval: 30s
+      rules:
+        - alert: TargetHighServerErrorRate
+          expr: sum(rate(http_server_requests_seconds_count{namespace="target-app", status=~"5.."}[30s])) > 1
+          for: 20s
+          labels:
+            severity: critical
+            chaosproof_experiment: pod_kill
+          annotations:
+            summary: "target-app 5xx rate above 1/s"
+
+        - alert: TargetHighLatencyP99
+          expr: histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{namespace="target-app"}[30s])) by (le)) > 2
+          for: 20s
+          labels:
+            severity: warning
+            chaosproof_experiment: network_latency
+          annotations:
+            summary: "target-app server-side P99 above 2s"
+
+        - alert: TargetReplicasUnavailable
+          expr: (kube_deployment_spec_replicas{namespace="target-app"} - kube_deployment_status_replicas_available{namespace="target-app"}) > 0
+          for: 20s
+          labels:
+            severity: critical
+            chaosproof_experiment: container_kill
+          annotations:
+            summary: "{{`{{ $labels.deployment }}`}} has unavailable replicas"
+
+        - alert: TargetPodEvicted
+          expr: sum(increase(kube_pod_status_reason{namespace="target-app", reason="Evicted"}[5m])) > 0
+          for: 20s
+          labels:
+            severity: warning
+            chaosproof_experiment: disk_fill
+          annotations:
+            summary: "pod evicted in target-app (expected assertion for disk-fill)"
+
+        - alert: TargetCpuThrottlingHigh
+          # Throttle RATIO — dimensionless. Raw throttled-period counters move with
+          # replica count and window length (measurement-integrity: looks-right-but-wrong).
+          expr: |
+            sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace="target-app"}[30s]))
+            /
+            sum by (pod) (rate(container_cpu_cfs_periods_total{namespace="target-app"}[30s])) > 0.25
+          for: 20s
+          labels:
+            severity: warning
+            chaosproof_experiment: cpu_spike
+          annotations:
+            summary: "{{`{{ $labels.pod }}`}} CPU throttle ratio above 25%"

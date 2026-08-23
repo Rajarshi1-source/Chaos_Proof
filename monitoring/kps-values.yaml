@@ -1,0 +1,22 @@
+# kube-prometheus-stack values for the chaosproof kind cluster.
+# Chart version is pinned at install time in the Makefile — never latest.
+prometheus:
+  prometheusSpec:
+    retention: 30d                # error-budget window is 30 days; shorter retention
+                                  # makes the budget incomputable (safety-plane skill)
+    # Pick up ServiceMonitors/Rules from any namespace without release-label games:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests: { memory: 512Mi, cpu: 200m }
+      limits: { memory: 1Gi }
+
+alertmanager:
+  enabled: true                   # the alert validator queries /api/v2/alerts
+
+grafana:
+  enabled: false                  # provisioned in Phase 6 as JSON-in-repo, not clicked
+
+# Trim non-essential exporters for a laptop kind cluster; kube-state-metrics stays
+# (replica/eviction assertions read it), node-exporter stays (PSI/cgroup signals).

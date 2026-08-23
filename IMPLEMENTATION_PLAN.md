@@ -226,7 +226,7 @@ Each phase ends with a **gate**: a demonstrable condition, not a checklist. If t
 - **LitmusChaos ≥ 3.30, exact tag pinned.** Expect a higher minor by install time; pin whatever is current.
 - **Alert rules** as a `PrometheusRule` CR, five rules, **`for: 20s`** per D-J.
 
-> **GATE 1** — `resilience4j_circuitbreaker_state{application="order-api",name="paymentService"}` returns a value in Prometheus. Then prove the guard works: remove `resilience4j-micrometer` from `order-api`'s pom, rebuild, and confirm readiness **fails** rather than the pod coming up blind. Restore.
+> **GATE 1** — `resilience4j_circuitbreaker_state{application="order-api",name="paymentService"}` returns a value in Prometheus. Then prove the guard works: sever `resilience4j-micrometer` from `order-api`'s classpath, rebuild, and confirm startup **fails** rather than the pod coming up blind. Restore. *(Executed 23 Aug 2026 — both parts passed. Nuance found: `-spring-boot4` 2.4.0 pulls micrometer transitively at runtime scope, so deleting the explicit dep alone doesn't blind the app; an `<exclusion>` does, and the assertion caught it: `Resilience metrics missing: [resilience4j.circuitbreaker.state, ...]`.)*
 
 ---
 
@@ -469,7 +469,7 @@ Consolidated from all eight skills, deduped. These hold in every phase.
 | **The headline is in the air** | At KubeCon India, June 2026, the most common Litmus booth question was how to shift chaos left into CI — so the CI gate alone is no longer differentiating. | Lead with the verification layer, and specifically **flakiness quarantine** (§21.3): it is the answer to "why would your team still have this enabled in six months." |
 | **xk6-disruptor** | A thin version of the load-plus-fault idea already exists inside k6. | Say so before an interviewer does — it is in §29.2's grid. |
 | **Scale is the honest weakness** | Six experiments a day, three services, one cluster. No multi-tenancy, no chaos-injection HA, no VM chaos. | Q23's answer: Flipkart's KubeCon India talk covers exactly those four problems on top of Litmus, and reading it is how you know what you have not solved. Cite it as *"their talk describes…"*, not as your own analysis. |
-| **`resilience4j-micrometer` silently absent** | Every pattern check reports `applicable=false` while the framework looks like it is working. | Gate 1 proves the startup assertion catches it. Keep that test. |
+| **`resilience4j-micrometer` silently absent** | Every pattern check reports `applicable=false` while the framework looks like it is working. | Gate 1 proved the startup assertion catches a severed classpath (verified 23 Aug 2026). Note `-spring-boot4` 2.4.0 ships micrometer transitively — the explicit pin is belt-and-braces; the assertion is the enforced guard. |
 
 ---
 

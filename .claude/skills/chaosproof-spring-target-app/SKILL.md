@@ -18,7 +18,7 @@ Every dependency decision below follows from that.
 | Java | **21 LTS** | **Resilience4j 3 requires Java 21** (Resilience4j 2 requires 17) |
 | Spring Boot | **4.1.x** — take whatever patch Initializr offers on the day you generate | The *line* is what matters (never 4.0.x — loses OSS support Dec 2026, and 4.0.6 specifically has 7 CVEs patched in 4.0.7); the exact patch digit isn't load-bearing and ships roughly monthly (4.1.0 → 4.1.1 within days of each other). Bumping later is a one-line edit — `<parent><version>` in each `pom.xml`. **Portfolio-consistency fallback:** to match NaukriNearby exactly, use **4.0.7** (the patched 4.0.x, never 4.0.6) — everything else on this page is identical either way |
 | Resilience4j | **`resilience4j-spring-boot4` 2.4.0** — the only Boot-4 line published on Maven Central as of Aug 2026; move to 3.x when it actually ships | See the two traps below |
-| Metrics | **`resilience4j-micrometer`** + `micrometer-registry-prometheus` + `spring-boot-starter-actuator` | Not optional, not transitive |
+| Metrics | **`resilience4j-micrometer`** + `micrometer-registry-prometheus` + `spring-boot-starter-actuator` | Not optional. **Runtime-verified nuance:** `-spring-boot4` 2.4.0 *does* pull `resilience4j-micrometer` transitively (runtime scope) — the not-transitive trap was real for `-spring-boot3`. Keep the explicit pin anyway (guards against the transitive being dropped again, and the BOM omission #2427 is still real), and treat the startup assertion as the enforced guard |
 | AOP | `org.aspectj:aspectjweaver` — **add manually to `pom.xml`; `spring-boot-starter-aop` was REMOVED in Boot 4 GA** (verified: the starter's last published version is 4.0.0-M2, and the 4.1.x parent manages `aspectjweaver` directly) | Required for Resilience4j's `@Aspect`-based annotations. Don't assume Spring Data JPA or Spring Security pull this in for you — core proxy-based AOP is transitively present via `spring-context`, but Resilience4j's autoconfigured aspects need AspectJ weaving support, which is a different thing. Version comes from the Boot parent. Same rule as `resilience4j-micrometer` below: declare it, don't gamble on a transitive |
 | Build | **Maven**, `maven.compiler.release` pinned to 21 | Matches the plan's own `pom.xml` project layout (§5.1) — Gradle was listed here in error in an earlier draft of this skill |
 
@@ -54,7 +54,7 @@ Every dependency decision below follows from that.
 </dependencies>
 ```
 
-**`resilience4j-micrometer` is the one that silently ruins the project.** Without it, no `resilience4j_*` series exist, every pattern check in ChaosProof reports `applicable=false`, and the framework looks like it is working while validating nothing. Fail readiness if the series are absent (see below).
+**`resilience4j-micrometer` is the one that silently ruins the project.** Without it, no `resilience4j_*` series exist, every pattern check in ChaosProof reports `applicable=false`, and the framework looks like it is working while validating nothing. Fail readiness if the series are absent (see below). **Runtime-verified (Gate 1 negative test):** `-spring-boot4` 2.4.0 ships it transitively at runtime scope, so merely deleting the explicit dependency does *not* blind the app — but an `<exclusion>`, a future artifact change, or a `-spring-boot3` classpath does, and the startup assertion caught the severed classpath exactly as designed.
 
 ## Why not Spring Boot 4's native resilience
 
