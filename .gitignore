@@ -1,0 +1,13 @@
+# Python (chaos-framework, evals)
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Node (dashboard, Phase 6)
+node_modules/
+.next/
+
+# Local scratch
+*.log
+.DS_Store

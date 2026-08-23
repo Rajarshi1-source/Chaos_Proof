@@ -45,14 +45,17 @@ spec:
               path: /actuator/health/readiness
               port: http
             periodSeconds: 5
+            timeoutSeconds: 3          # 1s default flaps under open-model load
             failureThreshold: 6
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
               port: http
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 4        # a saturated-but-alive gateway is not dead
           resources:
-            {{- toYaml $.Values.resources | nindent 12 }}
+            {{- toYaml (default $.Values.resources .resources) | nindent 12 }}
 ---
 apiVersion: v1
 kind: Service

@@ -1,0 +1,62 @@
+# §14.2 hypothesis object. Phase 2 consumes: litmus_fault, target, durations,
+# load_profile, min_rps_floor (the validity gate). The invariants are evaluated
+# by the hypothesis engine from Phase 3; abort_conditions arm in Phase 5.
+experiment:
+  name: pod_kill_payment_svc
+  litmus_fault: pod-delete
+  target: { namespace: target-app, app: payment-service }
+  fault_duration_s: 60
+  recovery_window_s: 120
+  chaos_fixture: crashy-api
+
+  load_profile: profiles/steady_120rps.js
+  min_rps_floor: 90              # below this: INVALID, not PASS
+
+  hypothesis:
+    version: 1
+    description: >
+      When one replica of payment-service is killed under 120 rps of steady traffic,
+      the system maintains >=99.0% client-observed availability and client P99 latency
+      stays under 800ms, because surviving replicas absorb traffic via the Service
+      endpoints and order-api's circuit breaker never needs to open.
+
+    invariants:
+      - name: client_availability_holds
+        source: k6                      # CLIENT-side, not server-side
+        metric: client_availability
+        comparator: ">="
+        threshold: 0.990
+        tolerance_s: 10                 # may breach <=10s during endpoint convergence
+
+      - name: client_p99_holds
+        source: k6
+        metric: client_p99_ms
+        comparator: "<="
+        threshold: 800
+        tolerance_s: 15
+
+      - name: no_server_5xx_storm
+        source: prometheus
+        metric: server_5xx_rate
+        comparator: "<="
+        threshold: 1.0
+        tolerance_s: 10
+
+      - name: replicas_restored
+        source: prometheus
+        metric: payment_replicas_available
+        comparator: ">="
+        threshold: 2
+        recover_within_s: 30            # RECOVERY invariant, not hold-throughout
+
+    abort_conditions:
+      - name: availability_collapse
+        source: k6
+        metric: client_availability
+        comparator: "<"
+        threshold: 0.80
+      - name: unrelated_namespace_impact
+        source: prometheus
+        metric: other_namespace_5xx_rate
+        comparator: ">"
+        threshold: 0.5

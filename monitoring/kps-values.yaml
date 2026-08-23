@@ -2,8 +2,10 @@
 # Chart version is pinned at install time in the Makefile — never latest.
 prometheus:
   prometheusSpec:
-    retention: 30d                # error-budget window is 30 days; shorter retention
-                                  # makes the budget incomputable (safety-plane skill)
+    retention: 30d                    # error-budget window is 30 days; shorter retention
+                                      # makes the budget incomputable (safety-plane skill)
+    enableRemoteWriteReceiver: true   # k6 remote-writes its client-side series here;
+                                      # the safety-plane promProbes read them (Phase 5)
     # Pick up ServiceMonitors/Rules from any namespace without release-label games:
     serviceMonitorSelectorNilUsesHelmValues: false
     podMonitorSelectorNilUsesHelmValues: false

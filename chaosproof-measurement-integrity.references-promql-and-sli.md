@@ -51,21 +51,24 @@ k6 exports through the Prometheus remote-write output; series are prefixed `k6_`
 
 ```promql
 # Client availability. THE primary availability SLI.
-1 - (
-  sum(rate(k6_http_reqs_failed_total{testrun="$TESTRUN"}[30s]))
-  /
-  sum(rate(k6_http_reqs_total{testrun="$TESTRUN"}[30s]))
-)
+# VERIFIED against k6 2.2.0 experimental-prometheus-rw (23 Aug 2026): k6 Rate
+# metrics export as k6_<name>_rate (a 0..1 ratio per push interval), NOT as a
+# _failed_total counter. An earlier draft of this file guessed the counter name.
+1 - avg(k6_http_req_failed_rate{testrun="$TESTRUN"})
 
-# Client p99 latency, in milliseconds.
-histogram_quantile(0.99,
-  sum(rate(k6_http_req_duration_seconds_bucket{testrun="$TESTRUN"}[30s])) by (le)
-) * 1000
+# Client p99 latency, in milliseconds. Trend metrics export as per-stat gauges
+# (k6_http_req_duration_p99 with K6_PROMETHEUS_RW_TREND_STATS="p(99),...");
+# _seconds_bucket series only exist under the native-histogram mapping mode.
+max(k6_http_req_duration_p99{testrun="$TESTRUN"})
 
 # Achieved arrival rate — the validity gate reads this.
 sum(rate(k6_http_reqs_total{testrun="$TESTRUN"}[30s]))
 
 # Dropped iterations: the generator saturated before the system did => INVALID.
+# Count drops WITHIN the measured window (increase / last-minus-first), never the
+# lifetime counter: k6 drops a handful of iterations while VUs initialise, and a
+# startup transient that predates the window must not invalidate it (verified
+# 23 Aug 2026: a perfectly steady 120rps run carried 56 boot-time drops).
 sum(increase(k6_dropped_iterations_total{testrun="$TESTRUN"}[1m]))
 ```
 
@@ -88,10 +91,7 @@ sum(rate(http_server_requests_seconds_count{namespace="target-app",status=~"5.."
 
 # The derived signal: requests that died before they were served.
 # Export as chaosproof_client_server_availability_gap.
-(
-  sum(rate(k6_http_reqs_failed_total{testrun="$TESTRUN"}[30s]))
-  / sum(rate(k6_http_reqs_total{testrun="$TESTRUN"}[30s]))
-)
+avg(k6_http_req_failed_rate{testrun="$TESTRUN"})
 -
 (
   sum(rate(http_server_requests_seconds_count{namespace="target-app",status=~"5.."}[30s]))

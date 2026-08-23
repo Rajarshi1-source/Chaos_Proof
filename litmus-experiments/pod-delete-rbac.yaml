@@ -1,0 +1,60 @@
+# Service account the pod-delete experiment runs under — namespace-scoped to
+# target-app, per the RBAC posture: destructive verbs belong to Litmus's own
+# per-experiment SA, never to the ChaosProof framework account (litmus-platform skill).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pod-delete-sa
+  namespace: target-app
+  labels:
+    name: pod-delete-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-delete-sa
+  namespace: target-app
+  labels:
+    name: pod-delete-sa
+rules:
+  # Create and monitor the experiment & helper pods
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "deletecollection"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "get", "list", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets", "daemonsets"]
+    verbs: ["list", "get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "list", "get", "delete", "deletecollection"]
+  - apiGroups: ["litmuschaos.io"]
+    resources: ["chaosengines", "chaosexperiments", "chaosresults"]
+    verbs: ["create", "list", "get", "patch", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-delete-sa
+  namespace: target-app
+  labels:
+    name: pod-delete-sa
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pod-delete-sa
+subjects:
+  - kind: ServiceAccount
+    name: pod-delete-sa
+    namespace: target-app

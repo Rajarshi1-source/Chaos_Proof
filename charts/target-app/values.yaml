@@ -21,6 +21,17 @@ services:
   - name: order-api
     port: 8080
     replicas: 2
+    # Gateway does its own 120rps PLUS the fan-out to two services; 500m starves
+    # a JIT-cold JVM into liveness kills under open-model load.
+    resources:
+      limits:
+        ephemeral-storage: 1Gi
+        memory: 512Mi
+        cpu: "1"
+      requests:
+        ephemeral-storage: 512Mi
+        memory: 256Mi
+        cpu: 300m
     env:
       - name: PAYMENT_SERVICE_URL
         value: http://payment-service:8081

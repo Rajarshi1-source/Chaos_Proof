@@ -1,0 +1,33 @@
+# k6 Operator TestRun: runs profiles/steady_120rps.js IN-CLUSTER (never from a
+# laptop or CI runner — the network path under test must be the real one) and
+# remote-writes client-side series into the same Prometheus the server metrics
+# land in, because the safety-plane promProbes read k6's series (Phase 5).
+#
+# ConfigMap first:  kubectl create configmap steady-120rps -n load \
+#                     --from-file=archive.js=profiles/steady_120rps.js
+apiVersion: k6.io/v1alpha1
+kind: TestRun
+metadata:
+  name: steady-120rps
+  namespace: load
+spec:
+  parallelism: 1
+  script:
+    configMap:
+      name: steady-120rps
+      file: archive.js
+  arguments: -o experimental-prometheus-rw --tag testrun=steady-120rps
+  runner:
+    image: grafana/k6:2.2.0   # pinned to the plan version; never latest
+    env:
+      - name: TARGET_URL
+        value: http://order-api.target-app:8080
+      - name: K6_PROMETHEUS_RW_SERVER_URL
+        value: http://kps-kube-prometheus-stack-prometheus.monitoring:9090/api/v1/write
+      - name: K6_PROMETHEUS_RW_TREND_STATS
+        value: "p(99),p(95),avg,min,max"
+      - name: K6_PROMETHEUS_RW_PUSH_INTERVAL
+        value: 5s
+    resources:
+      requests: { memory: 256Mi, cpu: 250m }
+      limits: { memory: 512Mi }

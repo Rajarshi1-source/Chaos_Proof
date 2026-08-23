@@ -244,7 +244,7 @@ Each phase ends with a **gate**: a demonstrable condition, not a checklist. If t
 - **`chaosproof_client_server_availability_gap`** exported: `client_error_rate − server_error_rate` ≈ requests that never reached a server.
 - **The corrected PromQL library** from `references-promql-and-sli.md` — `[30s]` windows at 5s scrape, throttle **ratio** not raw counters, `increase(container_oom_events_total[2m])` not the flapping gauge, `max_over_time` for circuit-breaker transitions.
 
-> **GATE 2** — stop the k6 `TestRun`, trigger pod-kill, and confirm the verdict is **`INVALID` — achieved 0 rps, floor 90**, not `PASS`. This is also demo beat 1 (§29.4). Record it now while it is easy.
+> **GATE 2** — stop the k6 `TestRun`, trigger pod-kill, and confirm the verdict is **`INVALID` — achieved 0 rps, floor 90**, not `PASS`. This is also demo beat 1 (§29.4). Record it now while it is easy. *(Executed 23 Aug 2026 — both directions: load OFF → `INVALID — achieved 0 rps, floor is 90`, persisted as execution #1 with its load_run and 288 dual-source samples; load ON → gate `VALID` at 120.0 rps, 0 in-window drops, 100% coverage. Two empirical corrections en route: k6 Rate metrics export as `k6_http_req_failed_rate` not a `_failed_total` counter, and drop-counting must be windowed — the lifetime counter carries a VU-init transient that would invalidate perfect runs.)*
 
 ---
 
