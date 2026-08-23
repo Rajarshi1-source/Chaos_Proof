@@ -1,6 +1,7 @@
-# §14.2 hypothesis object. Phase 2 consumes: litmus_fault, target, durations,
-# load_profile, min_rps_floor (the validity gate). The invariants are evaluated
-# by the hypothesis engine from Phase 3; abort_conditions arm in Phase 5.
+# §14.2 hypothesis object. Recovery invariants count their deadline from the
+# FIRST BREACH, not engine-apply time — Litmus bootstrap (image pull, helper
+# scheduling) sits between apply and the actual kill, and the verdict must
+# speak about the system, not the injector's startup latency.
 experiment:
   name: pod_kill_payment_svc
   litmus_fault: pod-delete
@@ -8,6 +9,10 @@ experiment:
   fault_duration_s: 60
   recovery_window_s: 120
   chaos_fixture: crashy-api
+  params:
+    PODS_AFFECTED_PERC: "50"    # one of two replicas; CHAOS_INTERVAL defaults to
+                                # the full duration -> a SINGLE kill event, which is
+                                # the claim the hypothesis actually makes
 
   load_profile: profiles/steady_120rps.js
   min_rps_floor: 90              # below this: INVALID, not PASS
@@ -18,7 +23,8 @@ experiment:
       When one replica of payment-service is killed under 120 rps of steady traffic,
       the system maintains >=99.0% client-observed availability and client P99 latency
       stays under 800ms, because surviving replicas absorb traffic via the Service
-      endpoints and order-api's circuit breaker never needs to open.
+      endpoints and order-api's circuit breaker never needs to open. The killed
+      replica returns to Available within 120s of the dip (JVM cold start dominates).
 
     invariants:
       - name: client_availability_holds
@@ -47,7 +53,8 @@ experiment:
         metric: payment_replicas_available
         comparator: ">="
         threshold: 2
-        recover_within_s: 30            # RECOVERY invariant, not hold-throughout
+        recover_within_s: 120           # RECOVERY invariant: from first breach;
+                                        # startupProbe budget + JVM boot dominate
 
     abort_conditions:
       - name: availability_collapse

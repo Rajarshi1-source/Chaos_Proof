@@ -59,7 +59,9 @@ k6 exports through the Prometheus remote-write output; series are prefixed `k6_`
 # Client p99 latency, in milliseconds. Trend metrics export as per-stat gauges
 # (k6_http_req_duration_p99 with K6_PROMETHEUS_RW_TREND_STATS="p(99),...");
 # _seconds_bucket series only exist under the native-histogram mapping mode.
-max(k6_http_req_duration_p99{testrun="$TESTRUN"})
+# UNITS (verified 23 Aug 2026): the exported gauge is in SECONDS — convert, or an
+# 800ms threshold silently becomes an 800-second one and can never falsify.
+max(k6_http_req_duration_p99{testrun="$TESTRUN"}) * 1000
 
 # Achieved arrival rate — the validity gate reads this.
 sum(rate(k6_http_reqs_total{testrun="$TESTRUN"}[30s]))

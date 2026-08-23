@@ -10,7 +10,11 @@ export const options = {
       executor: 'constant-arrival-rate',   // OPEN model. Never constant-vus.
       rate: 120, timeUnit: '1s',
       duration: '10m',
-      preAllocatedVUs: 200, maxVUs: 800,   // headroom so k6 never becomes the bottleneck
+      // 400 preAllocated: 120rps x 3s worst-case timeout = 360 VUs in flight.
+      // 200 proved insufficient (verified 23 Aug 2026): a pod-kill's latency spike
+      // pushed VU demand past 200 and k6 dropped 72 iterations in-window -> the
+      // validity gate correctly returned INVALID. Fix the generator, never the gate.
+      preAllocatedVUs: 400, maxVUs: 800,
     },
   },
   thresholds: {

@@ -47,9 +47,8 @@ load:           ## k6 TestRun, 120 rps open model, remote-writing into Prometheu
 load-stop:      ## Stop the load plane (the INVALID demo starts here)
 	kubectl delete testrun steady-120rps -n load --ignore-not-found
 
-experiment:     ## make experiment NAME=pod_kill_payment_svc (Phase 3)
-	@echo "[stub] Phase 3: chaosctl run $(NAME)"
-	@exit 1
+experiment:     ## make experiment NAME=pod_kill_payment_svc
+	cd chaos-framework && python -m src.chaosctl run $(NAME)
 
 dashboard:      ## Next.js dashboard at :3000 (Phase 6)
 	@echo "[stub] Phase 6: cd dashboard && npm run dev"

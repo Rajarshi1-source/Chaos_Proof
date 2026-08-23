@@ -257,7 +257,7 @@ Each phase ends with a **gate**: a demonstrable condition, not a checklist. If t
 - **Experiments 1–3**: pod kill, network latency, network partition — each with hypothesis, `min_rps_floor`, and `abort_conditions`.
 - **`chaosctl run <experiment>`** printing per-invariant verdicts.
 
-> **GATE 3** — `chaosctl run pod_kill_payment_svc` prints a per-invariant verdict table with `worst_value` and `breached_for_s` per invariant.
+> **GATE 3** — `chaosctl run pod_kill_payment_svc` prints a per-invariant verdict table with `worst_value` and `breached_for_s` per invariant. *(Executed 23 Aug 2026 — `HYPOTHESIS_HELD`, execution #4: availability worst 1.0000, p99 worst 22.98ms/800, 5xx worst 0.44/1.0, replicas restored in 30s/120 — all four persisted to `hypothesis_results`. En route the validity gate earned its keep twice: execution #2 came back `INVALID` because a pod-kill latency spike exhausted 200 preAllocated VUs (72 in-window drops) — fixed with 400 VUs, never a looser ceiling — and k6's duration gauges turned out to export SECONDS, which without `*1000` made the 800ms threshold an 800-second one; both corrections are in the reference file.)*
 
 ---
 

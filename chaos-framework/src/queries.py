@@ -17,8 +17,11 @@ CLIENT = {
     # Availability from the client's perspective. http_req_failed is a k6 Rate
     # metric (0..1 over the push interval).
     "client_availability": f'1 - avg(k6_http_req_failed_rate{{testrun="$TESTRUN"}})',
-    # Client p99 latency in ms (Trend stat gauge exported by k6).
-    "client_p99_ms": f'max(k6_http_req_duration_p99{{testrun="$TESTRUN"}})',
+    # Client p99 latency in ms. VERIFIED 23 Aug 2026: k6 2.2.0 prometheus-rw
+    # exports duration Trends in SECONDS (base units) — corroborated against the
+    # server-side histogram (k6 13.0ms vs server 6.5ms on the same window).
+    # Without the *1000 an 800ms threshold silently becomes an 800-SECOND one.
+    "client_p99_ms": f'max(k6_http_req_duration_p99{{testrun="$TESTRUN"}}) * 1000',
     # Generator saturation — drops mean the GENERATOR was the bottleneck.
     "dropped_iterations": f'sum(k6_dropped_iterations_total{{testrun="$TESTRUN"}}) or vector(0)',
 }
@@ -39,6 +42,18 @@ SERVER = {
     ),
     "other_namespace_5xx_rate": (
         f'sum(rate(http_server_requests_seconds_count{{status=~"5..",namespace!="target-app"}}[{W}]))'
+        f' or vector(0)'
+    ),
+    # Circuit-breaker observability (experiments 2-3 assert on the named instance).
+    # The state gauge is per-state series: state="open" == 1 while the breaker is open.
+    "cb_payment_open": (
+        'max(resilience4j_circuitbreaker_state'
+        '{application="order-api",name="paymentService",state="open"})'
+    ),
+    # The breaker DOING something, not just changing state: short-circuited calls.
+    "cb_payment_not_permitted_rate": (
+        f'sum(rate(resilience4j_circuitbreaker_calls_total'
+        f'{{application="order-api",name="paymentService",kind="not_permitted"}}[{W}]))'
         f' or vector(0)'
     ),
 }

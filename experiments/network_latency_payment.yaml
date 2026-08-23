@@ -1,0 +1,67 @@
+# Experiment 2: 500ms injected on every payment-service pod's interface.
+# The claim: order-api's 3s client timeout absorbs the latency without erroring;
+# the user sees degraded-but-working responses within the latency budget.
+# Written BEFORE first run (hypothesis-engine rule: the only way an experiment
+# can surprise you).
+experiment:
+  name: network_latency_payment
+  litmus_fault: pod-network-latency
+  target: { namespace: target-app, app: payment-service }
+  fault_duration_s: 60
+  recovery_window_s: 120
+  chaos_fixture: cpu-burner   # co-located trigger; the fault itself is Litmus-injected
+  params:
+    NETWORK_LATENCY: "500"
+
+  load_profile: profiles/steady_120rps.js
+  min_rps_floor: 90
+
+  hypothesis:
+    version: 1
+    description: >
+      With 500ms of injected latency on payment-service, client availability stays
+      >=99% and client P99 stays under 2000ms (degraded but within the chaos budget):
+      order-api's 3s call timeout comfortably covers +500ms, so calls succeed slowly
+      rather than fail, and the circuit breaker sees slow successes, not errors.
+      P99 returns under the steady 800ms budget within 60s of the fault ending.
+
+    invariants:
+      - name: client_availability_holds
+        source: k6
+        metric: client_availability
+        comparator: ">="
+        threshold: 0.990
+        tolerance_s: 10
+
+      - name: client_p99_degraded_within_budget
+        source: k6
+        metric: client_p99_ms
+        comparator: "<="
+        threshold: 2000                 # during-chaos budget, not the steady SLO
+        tolerance_s: 15
+
+      - name: p99_recovers_to_steady
+        source: k6
+        metric: client_p99_ms
+        comparator: "<="
+        threshold: 800                  # steady budget: expected to breach, must return
+        recover_within_s: 60
+
+      - name: no_server_5xx_storm
+        source: prometheus
+        metric: server_5xx_rate
+        comparator: "<="
+        threshold: 1.0
+        tolerance_s: 10
+
+    abort_conditions:
+      - name: availability_collapse
+        source: k6
+        metric: client_availability
+        comparator: "<"
+        threshold: 0.80
+      - name: unrelated_namespace_impact
+        source: prometheus
+        metric: other_namespace_5xx_rate
+        comparator: ">"
+        threshold: 0.5

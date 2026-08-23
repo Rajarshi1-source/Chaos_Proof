@@ -1,0 +1,68 @@
+# Experiment 3: 100% packet loss to payment-service — the partition.
+# The claim: order-api's circuit breaker OPENS (observable via the state gauge and
+# short-circuited calls) and the queue fallback keeps checkout available. This is
+# the pattern the whole project leads with: an unobservable breaker is unverifiable.
+experiment:
+  name: network_partition_payment
+  litmus_fault: pod-network-loss
+  target: { namespace: target-app, app: payment-service }
+  fault_duration_s: 60
+  recovery_window_s: 120
+  chaos_fixture: hungry-worker   # co-located trigger; the fault itself is Litmus-injected
+  params:
+    NETWORK_PACKET_LOSS_PERCENTAGE: "100"
+
+  load_profile: profiles/steady_120rps.js
+  min_rps_floor: 90
+
+  hypothesis:
+    version: 1
+    description: >
+      Under a full partition to payment-service, client availability stays >=95%:
+      the first calls burn the 3s timeout (P99 spikes), the circuit breaker on
+      order-api opens within ~30s of first failures (sliding window 10, threshold
+      50%), after which the QUEUED fallback serves instantly. The breaker's opening
+      is asserted on its published state — and on it actually short-circuiting calls.
+
+    invariants:
+      - name: availability_via_fallback
+        source: k6
+        metric: client_availability
+        comparator: ">="
+        threshold: 0.95
+        tolerance_s: 30                 # the pre-open window burns timeouts
+
+      - name: circuit_breaker_opens
+        source: prometheus
+        metric: cb_payment_open
+        comparator: ">="
+        threshold: 1                    # state="open" gauge flips to 1
+        recover_within_s: 90            # "breach" starts at t0 (gauge is 0); the
+                                        # breaker must open within 90s of window start
+
+      - name: breaker_short_circuits
+        source: prometheus
+        metric: cb_payment_not_permitted_rate
+        comparator: ">"
+        threshold: 0
+        recover_within_s: 90            # proves the breaker DID something, not just
+                                        # that a gauge moved
+
+      - name: no_server_5xx_storm
+        source: prometheus
+        metric: server_5xx_rate
+        comparator: "<="
+        threshold: 1.0
+        tolerance_s: 30
+
+    abort_conditions:
+      - name: availability_collapse
+        source: k6
+        metric: client_availability
+        comparator: "<"
+        threshold: 0.80
+      - name: unrelated_namespace_impact
+        source: prometheus
+        metric: other_namespace_5xx_rate
+        comparator: ">"
+        threshold: 0.5
