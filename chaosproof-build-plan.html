@@ -1,0 +1,989 @@
+<title>ChaosProof Build Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+/* ============ TOKENS — complete light palette on bare :root ============ */
+:root {
+  --paper:       #EDF0F3;
+  --surface:     #FBFCFD;
+  --surface-2:   #E1E7EC;
+  --ink:         #121A22;
+  --ink-2:       #37444F;
+  --muted:       #667584;
+  --rule:        #CBD4DC;
+  --rule-strong: #A9B6C2;
+  --accent:      #1B4D7A;
+  --accent-2:    #2C6DA6;
+  --accent-soft: #DCE7F1;
+  --held:        #2A6349;
+  --held-soft:   #DCEBE3;
+  --falsified:   #855715;
+  --falsified-soft:#F3E7CF;
+  --invalid:     #5F6D7B;
+  --invalid-soft:#DDE3E9;
+  --danger:      #8B382F;
+  --danger-soft: #F2DEDB;
+  --shadow:      0 1px 2px rgba(18,26,34,.05), 0 6px 18px -10px rgba(18,26,34,.18);
+
+  --f-display: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-body:    "Source Serif 4", ui-serif, Georgia, "Times New Roman", serif;
+  --f-mono:    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:       #0E141A;
+    --surface:     #151D25;
+    --surface-2:   #1D2731;
+    --ink:         #E3E9EF;
+    --ink-2:       #AFBCC7;
+    --muted:       #7C8B99;
+    --rule:        #27333E;
+    --rule-strong: #3A4855;
+    --accent:      #7BB0DE;
+    --accent-2:    #A2CBEC;
+    --accent-soft: #17293A;
+    --held:        #63B48C;
+    --held-soft:   #14291F;
+    --falsified:   #D2A45B;
+    --falsified-soft:#2B2416;
+    --invalid:     #8593A0;
+    --invalid-soft:#1C242C;
+    --danger:      #DB8479;
+    --danger-soft: #2C1A18;
+    --shadow:      0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"] {
+  --paper:       #0E141A;
+  --surface:     #151D25;
+  --surface-2:   #1D2731;
+  --ink:         #E3E9EF;
+  --ink-2:       #AFBCC7;
+  --muted:       #7C8B99;
+  --rule:        #27333E;
+  --rule-strong: #3A4855;
+  --accent:      #7BB0DE;
+  --accent-2:    #A2CBEC;
+  --accent-soft: #17293A;
+  --held:        #63B48C;
+  --held-soft:   #14291F;
+  --falsified:   #D2A45B;
+  --falsified-soft:#2B2416;
+  --invalid:     #8593A0;
+  --invalid-soft:#1C242C;
+  --danger:      #DB8479;
+  --danger-soft: #2C1A18;
+  --shadow:      0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 17px;
+  line-height: 1.66;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ============ SHELL ============ */
+.shell { max-width: 1320px; margin: 0 auto; padding: 0 28px 96px; }
+
+@media (min-width: 1120px) {
+  .shell { display: grid; grid-template-columns: 232px minmax(0,1fr); gap: 56px; align-items: start; }
+  .masthead { grid-column: 1 / -1; }
+}
+
+/* ============ MASTHEAD ============ */
+.masthead { padding: 64px 0 40px; border-bottom: 2px solid var(--ink); margin-bottom: 44px; }
+.eyebrow {
+  font-family: var(--f-display); font-size: 11.5px; font-weight: 600;
+  letter-spacing: .16em; text-transform: uppercase; color: var(--accent);
+  display: flex; align-items: center; gap: 12px; margin-bottom: 20px;
+}
+.eyebrow::after { content: ""; flex: 1; height: 1px; background: var(--rule-strong); }
+h1 {
+  font-family: var(--f-display); font-weight: 600; font-size: clamp(2.4rem, 5.6vw, 3.9rem);
+  line-height: 1.02; letter-spacing: -.028em; margin: 0 0 20px; text-wrap: balance;
+}
+h1 .thin { color: var(--muted); font-weight: 400; }
+.standfirst {
+  font-size: 1.16rem; color: var(--ink-2); max-width: 62ch; margin: 0 0 30px;
+}
+.standfirst strong { color: var(--ink); font-weight: 600; }
+.meta {
+  display: flex; flex-wrap: wrap; gap: 0 32px; row-gap: 12px;
+  font-family: var(--f-display); font-size: 12.5px; color: var(--muted);
+  padding-top: 22px; border-top: 1px solid var(--rule);
+}
+.meta b {
+  display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 3px;
+}
+.meta span { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* ============ RAIL ============ */
+.rail { display: none; }
+@media (min-width: 1120px) {
+  .rail {
+    display: block; position: sticky; top: 28px; font-family: var(--f-display);
+    max-height: calc(100vh - 56px); overflow-y: auto; padding-right: 6px;
+  }
+}
+.rail h2 {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid var(--rule);
+}
+.rail ol { list-style: none; margin: 0 0 26px; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.rail a {
+  display: grid; grid-template-columns: 26px 1fr; gap: 8px; align-items: baseline;
+  padding: 5px 8px 5px 0; font-size: 13px; color: var(--ink-2); text-decoration: none;
+  border-radius: 3px; line-height: 1.35;
+}
+.rail a:hover { color: var(--accent); background: var(--accent-soft); }
+.rail a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rail .n {
+  font-family: var(--f-mono); font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums; text-align: right;
+}
+.rail .part {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--accent); margin: 0 0 8px; padding-top: 4px;
+}
+
+/* ============ TYPE ============ */
+main { min-width: 0; }
+section { scroll-margin-top: 24px; }
+h2.part-head {
+  font-family: var(--f-display); font-size: clamp(1.55rem, 3vw, 2.05rem); font-weight: 600;
+  letter-spacing: -.02em; line-height: 1.14; margin: 76px 0 8px; text-wrap: balance;
+  padding-top: 26px; border-top: 2px solid var(--ink);
+}
+h2.part-head:first-child, .masthead + main h2.part-head:first-of-type { margin-top: 0; }
+.part-label {
+  font-family: var(--f-display); font-size: 11px; font-weight: 600; letter-spacing: .15em;
+  text-transform: uppercase; color: var(--accent); margin-bottom: 0;
+}
+h3 {
+  font-family: var(--f-display); font-size: 1.2rem; font-weight: 600; letter-spacing: -.012em;
+  margin: 40px 0 12px; text-wrap: balance;
+}
+h4 {
+  font-family: var(--f-display); font-size: .95rem; font-weight: 600; letter-spacing: -.005em;
+  margin: 28px 0 8px; color: var(--ink);
+}
+p { margin: 0 0 16px; max-width: 68ch; }
+.lede { font-size: 1.05rem; color: var(--ink-2); max-width: 66ch; }
+ul, ol.body-list { max-width: 68ch; margin: 0 0 18px; padding-left: 1.25em; }
+li { margin-bottom: 8px; }
+li::marker { color: var(--muted); }
+code {
+  font-family: var(--f-mono); font-size: .845em; background: var(--surface-2);
+  padding: .1em .34em; border-radius: 3px; color: var(--ink);
+  border: 1px solid var(--rule);
+}
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+strong { font-weight: 600; }
+em { font-style: italic; }
+
+/* ============ CODE BLOCKS ============ */
+.code {
+  background: var(--surface); border: 1px solid var(--rule); border-left: 3px solid var(--accent);
+  border-radius: 4px; margin: 0 0 22px; overflow-x: auto; box-shadow: var(--shadow);
+}
+.code pre {
+  margin: 0; padding: 16px 18px; font-family: var(--f-mono); font-size: 12.8px;
+  line-height: 1.62; color: var(--ink-2); white-space: pre;
+}
+.code .cm { color: var(--muted); font-style: italic; }
+.code .kw { color: var(--accent); }
+
+/* ============ TABLES ============ */
+.tw { overflow-x: auto; margin: 0 0 24px; border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); box-shadow: var(--shadow); }
+table { border-collapse: collapse; width: 100%; font-family: var(--f-display); font-size: 13.6px; line-height: 1.5; }
+thead th {
+  text-align: left; font-weight: 600; font-size: 10.5px; letter-spacing: .11em;
+  text-transform: uppercase; color: var(--muted); padding: 11px 14px;
+  border-bottom: 1px solid var(--rule-strong); background: var(--surface-2); white-space: nowrap;
+}
+tbody td { padding: 11px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--ink-2); }
+tbody tr:last-child td { border-bottom: 0; }
+tbody td:first-child { color: var(--ink); font-weight: 500; }
+td code, th code { font-size: .88em; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* ============ CHIPS ============ */
+.chip {
+  display: inline-flex; align-items: center; gap: 5px; font-family: var(--f-display);
+  font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase;
+  padding: 2.5px 8px; border-radius: 3px; white-space: nowrap; border: 1px solid transparent;
+}
+.chip-ok   { background: var(--held-soft); color: var(--held); border-color: var(--held); }
+.chip-warn { background: var(--falsified-soft); color: var(--falsified); border-color: var(--falsified); }
+.chip-bad  { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+.chip-inv  {
+  color: var(--invalid); border-color: var(--invalid);
+  background-color: var(--invalid-soft);
+  background-image: repeating-linear-gradient(135deg, transparent 0 4px, var(--rule) 4px 5px);
+}
+
+/* ============ RULING BLOCKS (divergences) ============ */
+.div {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
+  padding: 18px 20px; margin: 0 0 16px; box-shadow: var(--shadow);
+}
+.div-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;
+  font-family: var(--f-display);
+}
+.div-id {
+  font-family: var(--f-mono); font-size: 11.5px; font-weight: 600; color: var(--surface);
+  background: var(--accent); padding: 2px 7px; border-radius: 3px; letter-spacing: .02em;
+}
+.div-title { font-weight: 600; font-size: .99rem; color: var(--ink); letter-spacing: -.01em; }
+.div p { font-size: .96rem; margin-bottom: 12px; }
+.div p:last-child { margin-bottom: 0; }
+.ruling {
+  border-left: 3px solid var(--held); background: var(--held-soft); padding: 11px 15px;
+  border-radius: 0 3px 3px 0; margin: 0;
+}
+.ruling p { margin: 0 0 9px; font-size: .94rem; color: var(--ink-2); }
+.ruling p:last-child { margin-bottom: 0; }
+.ruling b.r-label {
+  font-family: var(--f-display); font-size: 10.5px; font-weight: 600; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--held); display: inline-block; margin-right: 6px;
+}
+
+/* ============ PHASE BLOCKS ============ */
+.phase {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 5px;
+  margin: 0 0 22px; overflow: hidden; box-shadow: var(--shadow);
+}
+.phase-head {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 16px; align-items: center;
+  padding: 15px 20px; background: var(--surface-2); border-bottom: 1px solid var(--rule);
+}
+.phase-n {
+  font-family: var(--f-mono); font-size: 20px; font-weight: 600; color: var(--accent);
+  font-variant-numeric: tabular-nums; line-height: 1;
+}
+.phase-t {
+  font-family: var(--f-display); font-weight: 600; font-size: 1.04rem; letter-spacing: -.014em;
+  color: var(--ink); line-height: 1.25;
+}
+.phase-w {
+  font-family: var(--f-display); font-size: 10.5px; font-weight: 600; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--muted); white-space: nowrap;
+}
+.phase-body { padding: 20px 22px 4px; }
+.phase-body > p:first-child { margin-top: 0; }
+.phase-body ul { max-width: none; }
+.phase-body li { font-size: .96rem; }
+
+.gate {
+  margin: 4px 0 0; padding: 15px 22px 17px;
+  border-top: 1px solid var(--rule);
+  background: var(--accent-soft);
+  display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: start;
+}
+.gate-label {
+  font-family: var(--f-mono); font-size: 10.5px; font-weight: 600; letter-spacing: .1em;
+  color: var(--surface); background: var(--accent); padding: 3px 8px; border-radius: 3px;
+  white-space: nowrap; margin-top: 2px;
+}
+.gate p { margin: 0; font-size: .96rem; color: var(--ink-2); max-width: 64ch; }
+.gate p + p { margin-top: 8px; }
+
+/* ============ CALLOUT ============ */
+.callout {
+  border-left: 3px solid var(--falsified); background: var(--falsified-soft);
+  padding: 14px 18px; border-radius: 0 4px 4px 0; margin: 0 0 22px;
+}
+.callout p { margin: 0 0 10px; font-size: .97rem; color: var(--ink-2); }
+.callout p:last-child { margin-bottom: 0; }
+.callout .co-label {
+  font-family: var(--f-display); font-size: 10.5px; font-weight: 600; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--falsified); display: block; margin-bottom: 7px;
+}
+
+/* ============ INVARIANT GRID ============ */
+.inv-group { margin-bottom: 26px; }
+.inv-group h4 {
+  margin: 0 0 10px; padding-bottom: 7px; border-bottom: 1px solid var(--rule);
+  font-size: 11px; letter-spacing: .13em; text-transform: uppercase; color: var(--accent);
+}
+ol.inv { list-style: none; counter-reset: inv; margin: 0; padding: 0; }
+ol.inv li {
+  counter-increment: inv; display: grid; grid-template-columns: 26px 1fr; gap: 10px;
+  font-family: var(--f-display); font-size: 13.8px; line-height: 1.5; margin-bottom: 7px;
+  color: var(--ink-2); max-width: 74ch;
+}
+ol.inv li::before {
+  content: counter(inv); font-family: var(--f-mono); font-size: 11.5px; color: var(--muted);
+  text-align: right; font-variant-numeric: tabular-nums; padding-top: 2px;
+}
+
+/* ============ FOOTER ============ */
+footer {
+  margin-top: 72px; padding-top: 22px; border-top: 2px solid var(--ink);
+  font-family: var(--f-display); font-size: 12.5px; color: var(--muted);
+  display: flex; flex-wrap: wrap; gap: 8px 28px; justify-content: space-between;
+}
+footer span { font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+
+<div class="shell">
+
+<header class="masthead">
+  <div class="eyebrow">ChaosProof · Build Order</div>
+  <h1>From skeleton<br><span class="thin">to signed evidence</span></h1>
+  <p class="standfirst">
+    Rev 2 is the design — 3,462 lines of it. This is the <strong>build order</strong>: what is already on disk,
+    the ten places the design and the working tree disagree, a ruling on each, and thirteen dependency-ordered
+    phases that each end in a gate you can demonstrate rather than tick.
+  </p>
+  <div class="meta">
+    <div><b>Basis</b><span>Rev 2 + 8 skill files</span></div>
+    <div><b>Audit</b><span>Working tree, commit 8dd5ef1</span></div>
+    <div><b>Prepared</b><span>23 Aug 2026</span></div>
+    <div><b>Schedule</b><span>7 weeks core · 5 differentiators</span></div>
+    <div><b>Governing rule</b><span>§16 before everything</span></div>
+  </div>
+</header>
+
+<nav class="rail" aria-label="Contents">
+  <h2>Contents</h2>
+  <p class="part">Part 0 · Audit</p>
+  <ol>
+    <li><a href="#exists"><span class="n">0.1</span><span>What exists</span></a></li>
+    <li><a href="#toolchain"><span class="n">0.2</span><span>Toolchain</span></a></li>
+    <li><a href="#missing"><span class="n">0.3</span><span>What is missing</span></a></li>
+    <li><a href="#divergences"><span class="n">0.4</span><span>Divergences &amp; rulings</span></a></li>
+  </ol>
+  <p class="part">Part 1 · Contract</p>
+  <ol>
+    <li><a href="#verdicts"><span class="n">1.1</span><span>Verdict vocabulary</span></a></li>
+    <li><a href="#constants"><span class="n">1.2</span><span>Threshold constants</span></a></li>
+  </ol>
+  <p class="part">Part 2 · Phases</p>
+  <ol>
+    <li><a href="#p0"><span class="n">0</span><span>Repo foundation</span></a></li>
+    <li><a href="#p1"><span class="n">1</span><span>App publishes state</span></a></li>
+    <li><a href="#p2"><span class="n">2</span><span>Load plane</span></a></li>
+    <li><a href="#p3"><span class="n">3</span><span>Hypothesis engine</span></a></li>
+    <li><a href="#p4"><span class="n">4</span><span>Experiments 4–6</span></a></li>
+    <li><a href="#p5"><span class="n">5</span><span>Safety plane</span></a></li>
+    <li><a href="#p6"><span class="n">6</span><span>Dashboard</span></a></li>
+    <li><a href="#p7"><span class="n">7</span><span>CI chaos gate</span></a></li>
+    <li><a href="#p8"><span class="n">8</span><span>MLOps wrapper</span></a></li>
+    <li><a href="#p9"><span class="n">9</span><span>Contracts</span></a></li>
+    <li><a href="#p10"><span class="n">10</span><span>Counterfactual</span></a></li>
+    <li><a href="#p11"><span class="n">11</span><span>Cascades &amp; evidence</span></a></li>
+    <li><a href="#p12"><span class="n">12</span><span>Bisection &amp; polish</span></a></li>
+  </ol>
+  <p class="part">Parts 3–6</p>
+  <ol>
+    <li><a href="#invariants"><span class="n">3</span><span>Invariants</span></a></li>
+    <li><a href="#risks"><span class="n">4</span><span>Risk register</span></a></li>
+    <li><a href="#deferred"><span class="n">5</span><span>Deferred</span></a></li>
+    <li><a href="#next"><span class="n">6</span><span>Test next</span></a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- ════════════ PART 0 ════════════ -->
+<section id="audit">
+<p class="part-label">Part 0</p>
+<h2 class="part-head">Verified audit of the working tree</h2>
+<p class="lede">Everything below was read from disk, not assumed. The git tree is clean; all 35 tracked files sit at commit <code>8dd5ef1</code>.</p>
+
+<h3 id="exists">0.1 &nbsp;What exists</h3>
+<div class="tw">
+<table>
+<thead><tr><th>Area</th><th>State</th></tr></thead>
+<tbody>
+<tr><td>The three services</td><td>Spring Initializr skeletons — a <code>@SpringBootApplication</code> class and an empty <code>contextLoads()</code> test. No controllers, services, resilience config, or Dockerfiles.</td></tr>
+<tr><td>Spring Boot</td><td><strong>4.1.1</strong> on all three · Java 21 · Maven · jar packaging</td></tr>
+<tr><td>Group / artifact</td><td><code>com.chaosproof</code> / <code>order-api</code>, <code>payment-service</code>, <code>inventory-service</code> — <strong>matches the plan exactly.</strong> Prometheus <code>application=</code> labels, Helm chart names, K8s Service names and the contract <code>service:</code> field all key off these strings.</td></tr>
+<tr><td><code>application.yaml</code></td><td>Present on all three — YAML, not <code>.properties</code> — containing only <code>spring.application.name</code>, set correctly</td></tr>
+<tr><td>Shared dependencies</td><td><code>spring-boot-starter-actuator</code> · <code>spring-boot-starter-webmvc</code> · <code>micrometer-registry-prometheus</code> (runtime) · <code>lombok</code> with annotation-processor paths</td></tr>
+<tr><td><code>inventory-service</code> extras</td><td><code>spring-boot-starter-data-jpa</code> · <code>postgresql</code> (runtime). <strong>No MySQL</strong> — correct.</td></tr>
+<tr><td>Skill sources</td><td>Eight <code>chaosproof-*.SKILL.md</code> at repo root plus two reference files, all byte-identical to the packaged bundles</td></tr>
+<tr><td>Skill bundles</td><td>Eight <code>.claude/skills/*.skill</code> — <strong>ZIP archives, not extracted</strong></td></tr>
+<tr><td>Design doc</td><td><code>ChaosProof_Implementation_Plan_Rev2.md</code>, single copy. The byte-identical duplicate feature doc flagged earlier is already gone.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="toolchain">0.2 &nbsp;Toolchain — installed and matching the pins</h3>
+<div class="tw">
+<table>
+<thead><tr><th>Tool</th><th>Installed</th><th>Pin</th><th></th></tr></thead>
+<tbody>
+<tr><td>Java</td><td class="num">21.0.11 LTS</td><td>21 LTS</td><td><span class="chip chip-ok">match</span></td></tr>
+<tr><td>Python</td><td class="num">3.14.6</td><td>3.14</td><td><span class="chip chip-ok">match</span></td></tr>
+<tr><td>Node.js</td><td class="num">24.12.0</td><td>24 LTS</td><td><span class="chip chip-ok">match</span></td></tr>
+<tr><td>Docker</td><td class="num">29.7.2</td><td>—</td><td><span class="chip chip-ok">ok</span></td></tr>
+<tr><td>kubectl</td><td class="num">1.36.1</td><td>1.36 demo · 1.35 floor</td><td><span class="chip chip-ok">match</span></td></tr>
+<tr><td>Helm</td><td class="num">4.2.4</td><td>4.2.x</td><td><span class="chip chip-ok">match</span></td></tr>
+<tr><td>kind</td><td class="num">0.32.0</td><td><code>kindest/node:v1.36.x</code></td><td><span class="chip chip-ok">match</span></td></tr>
+<tr><td>k6 CLI</td><td><em>not installed</em></td><td>2.2.x</td><td><span class="chip chip-warn">optional</span></td></tr>
+</tbody>
+</table>
+</div>
+<p>k6 CLI is only needed to lint and dry-run load scripts locally. The load plane itself runs in-cluster as a k6 Operator <code>TestRun</code> CR — deliberately, because the network path under test must be the real one and the load must outlive the CI job. Install it for authoring convenience, not as a dependency.</p>
+
+<h3 id="missing">0.3 &nbsp;What does not exist at all</h3>
+<p>Every non-Java component of the project is unwritten:</p>
+<p style="font-family:var(--f-mono);font-size:13px;line-height:1.9;color:var(--ink-2);max-width:none">
+<code>chaos-framework/</code> · <code>dashboard/</code> · <code>litmus-experiments/</code> · <code>charts/</code> · <code>monitoring/</code> · <code>.github/workflows/</code> · <code>docker-compose.yml</code> · <code>Makefile</code> · <code>README.md</code> · <code>slos/definitions.yaml</code> · <code>policy/chaos_safety.yaml</code> · <code>scenarios/</code> · <code>evals/</code> · <code>profiles/</code> · <code>migrations/</code> · <code>docs/adr/</code> · <code>EXPERIMENTS.md</code> · Dockerfiles
+</p>
+
+<h3 id="divergences">0.4 &nbsp;Divergences found, with rulings</h3>
+<p class="lede">Ten places the design, the skills, and the disk disagree. Each needs a decision before Phase 1 starts.</p>
+
+<div class="div">
+  <div class="div-head"><span class="div-id">D-A</span><span class="div-title">The eight skills are packaged but not installed</span></div>
+  <p><code>.claude/skills/*.skill</code> are ZIP archives — verified by the <code>PK</code> header, contents <code>&lt;name&gt;/SKILL.md</code> plus <code>references/</code>. Claude Code loads skills from <code>.claude/skills/&lt;name&gt;/SKILL.md</code> directories. None of the eight appear in the active skill list, so <strong>none of the project's rules are currently being applied by default.</strong></p>
+  <div class="ruling"><p><b class="r-label">Ruling</b>Extract in place. This is Phase 0, task 1 — every subsequent phase assumes these rules are live.</p></div>
+</div>
+
+<div class="div">
+  <div class="div-head"><span class="div-id">D-B</span><span class="div-title">Doubled directory nesting</span></div>
+  <p>Services sit at <code>order-api/order-api/</code> and so on — an artifact of extracting each Initializr zip into a directory of the same name. §5.1 expects <code>target-app/&lt;service&gt;/</code>.</p>
+  <div class="ruling"><p><b class="r-label">Ruling</b>Flatten with <code>git mv</code>. Docker build contexts, Helm chart paths, §9.1's compose file, and <code>target-app/order-api/resilience-contract.yaml</code> in §19.1 all assume the flat layout.</p></div>
+</div>
+
+<div class="div">
+  <div class="div-head"><span class="div-id">D-C</span><span class="div-title">Package names carry underscores</span></div>
+  <p>Generated packages are <code>com.chaosproof.order_api</code>, <code>payment_service</code>, <code>inventory_service</code>. §5.1's tree shows <code>com/chaosproof/orderapi/</code>. Current Initializr sanitises the artifact's hyphen to an underscore rather than removing it.</p>
+  <div class="ruling"><p><b class="r-label">Ruling</b><strong>Keep the generated form.</strong> Nothing outside the JVM references the package path — Prometheus's <code>application=</code> label comes from <code>spring.application.name</code>, not the package. Renaming touches every file and import for zero external benefit. §5.1's tree is a sketch; the artifact names, which <em>are</em> load-bearing, already match.</p></div>
+</div>
+
+<div class="div">
+  <div class="div-head"><span class="div-id">D-D</span><span class="div-title">Three dependencies missing from all three poms</span></div>
+  <p><code>resilience4j-spring-boot4</code>, <code>resilience4j-micrometer</code>, and AspectJ weaving support are absent. <em>(Build-verified: <code>spring-boot-starter-aop</code> was removed in Boot 4 GA — last published at 4.0.0-M2; use <code>org.aspectj:aspectjweaver</code>, parent-managed.)</em> This is precisely the trap the target-app skill names: none of the three is selectable on Initializr, and <code>resilience4j-micrometer</code> is <strong>not transitive</strong>.</p>
+  <div class="ruling">
+    <p><b class="r-label">Ruling</b>Add all three by hand to each <code>pom.xml</code> in Phase 0, using the XML block in the skill. If skipped: no <code>resilience4j_*</code> series exist, every pattern check reports <code>applicable=false</code>, and the framework validates nothing while appearing to work.</p>
+    <p>Verify whether the Resilience4j BOM now includes <code>resilience4j-spring-boot4</code> (issue #2427, open as of March 2026). If not, pin <code>${resilience4j.version}</code> explicitly on both modules.</p>
+  </div>
+</div>
+
+<div class="div">
+  <div class="div-head"><span class="div-id">D-E</span><span class="div-title">Spring Boot: plan says 4.0.x, skill says 4.1.x, disk has 4.1.1</span></div>
+  <div class="ruling"><p><b class="r-label">Ruling</b><strong>4.1.1 stands.</strong> The target-app skill, updated 22–23 Aug 2026, supersedes §B's row and floats the patch deliberately — the <em>line</em> is what matters, the digit is not load-bearing and ships roughly monthly. §B's <code>4.0.x</code> row is stale; treat 4.0.x only as the portfolio-consistency fallback (<code>4.0.7</code>, never <code>4.0.6</code> — seven CVEs).</p></div>
+</div>
+
+<div class="div">
+  <div class="div-head"><span class="div-id">D-F</span><span class="div-title"><code>spring-boot-starter-webmvc</code>, not <code>-web</code></span></div>
+  <p>The generated poms use <code>spring-boot-starter-webmvc</code>, and <code>spring-boot-starter-webmvc-test</code> / <code>-actuator-test</code> in place of <code>spring-boot-starter-test</code>. This is the Boot 4 starter split.</p>
+  <div class="ruling"><p><b class="r-label">Ruling</b>Use the generated names. Any snippet referencing <code>spring-boot-starter-web</code> or <code>spring-boot-starter-test</code> predates Boot 4 and must not be pasted in.</p></div>
+</div>
+
+<div class="div">
+  <div class="div-head"><span class="div-id">D-G</span><span class="div-title"><code>application.yaml</code> is nearly empty</span></div>
+  <p>It holds <code>spring.application.name</code> and nothing else. Missing: actuator endpoint exposure, <code>management.metrics.tags.application</code>, per-service <code>server.port</code>, and every <code>resilience4j.*</code> instance block.</p>
+  <div class="ruling"><p><b class="r-label">Ruling</b>Author the full config in Phase 0/1. <strong><code>management.metrics.tags.application</code> is the highest-stakes line</strong> — every ChaosProof query filters on <code>application=</code>, and an unset tag makes every pattern query return empty, which a naive validator reads as a pass. It is the exact failure mode the empty-series rule exists to catch.</p></div>
+</div>
+
+<div class="div">
+  <div class="div-head"><span class="div-id">D-H</span><span class="div-title">Initializr placeholder blocks</span></div>
+  <p>All three poms carry empty <code>&lt;name/&gt;</code>, <code>&lt;description/&gt;</code>, <code>&lt;url/&gt;</code> and stub <code>&lt;licenses&gt;</code>, <code>&lt;developers&gt;</code>, <code>&lt;scm&gt;</code> elements.</p>
+  <div class="ruling"><p><b class="r-label">Ruling</b>Fill <code>&lt;name&gt;</code> and <code>&lt;description&gt;</code> from the skill's metadata table; delete the empty stubs. Cosmetic, but they emit Maven warnings on every build, and a warning-free build is worth more than the thirty seconds.</p></div>
+</div>
+
+<div class="div">
+  <div class="div-head"><span class="div-id">D-I</span><span class="div-title"><code>db_query_seconds</code> does not exist and cannot come from defaults</span></div>
+  <p>§18.2's cascade stage <code>db_pressure</code> triggers on <code>histogram_quantile(0.99, sum(rate(db_query_seconds_bucket[30s])) by (le)) &gt; 0.200</code>. Spring's default JDBC and Hikari metrics do not emit a histogram under that name.</p>
+  <div class="ruling"><p><b class="r-label">Ruling</b>Create it explicitly in <code>inventory-service</code> with a <code>@Timed</code>-annotated repository wrapper. <code>@Timed(value = "db_query", …)</code> produces <code>db_query_seconds_*</code>. Requires AspectJ weaving (<code>org.aspectj:aspectjweaver</code>, D-D) and a registered <code>TimedAspect</code> bean — verify it is present at startup rather than assuming auto-configuration, and remember <code>@Timed</code> is proxy-based, so the annotated method must be called from <em>outside</em> its own bean.</p></div>
+</div>
+
+<div class="div">
+  <div class="div-head"><span class="div-id">D-J</span><span class="div-title">The alert-latency SLO is arithmetically impossible as written</span></div>
+  <p>§3's <code>slos/definitions.yaml</code> sets <code>alert_latency.target_seconds: 60</code>. With the project's own pins the floor is:</p>
+  <div class="code"><pre>irreducible = scrape_interval + evaluation_interval + rule `for:`
+            = 5s             + 30s                 + 60s          = <span class="kw">95s</span></pre></div>
+  <p>A correctly configured alerting stack fails this SLO on every single run.</p>
+  <div class="ruling">
+    <p><b class="r-label">Ruling</b>Keep the 60s SLO and set <strong><code>for: 20s</code></strong> on the chaos alert rules → floor <code>20 + 30 + 5 = 55s ≤ 60s</code>. A short <code>for:</code> is right here anyway: fault durations are 30–60s, so a one-minute <code>for:</code> would routinely miss the fault entirely.</p>
+    <p><em>Alternative</em> if a longer <code>for:</code> is wanted for noise suppression: keep <code>for: 1m</code> and raise the SLO to 120s. Either way <code>evals/alert_rule_lint.py</code> enforces the arithmetic in CI, and §16.5's <code>excess_latency</code> is what gets graded — not raw detection latency.</p>
+  </div>
+</div>
+</section>
+
+<!-- ════════════ PART 1 ════════════ -->
+<section id="contract">
+<p class="part-label">Part 1</p>
+<h2 class="part-head">The shared contract</h2>
+<p class="lede">Three skills encode rules that only make sense together, and a session that loads one without the others can apply half a rule. Stated once, here, as the authority.</p>
+
+<h3 id="verdicts">1.1 &nbsp;The verdict vocabulary</h3>
+<div class="tw">
+<table>
+<thead><tr><th>Verdict</th><th>Meaning</th><th>Scoreable</th><th>Trend</th><th>Defined by</th></tr></thead>
+<tbody>
+<tr><td><span class="chip chip-ok">held</span></td><td>Every invariant held within tolerance</td><td>yes</td><td>included</td><td>hypothesis-engine</td></tr>
+<tr><td><span class="chip chip-warn">falsified</span></td><td>At least one invariant breached beyond tolerance</td><td>yes</td><td>included</td><td>hypothesis-engine</td></tr>
+<tr><td><span class="chip chip-inv">invalid</span></td><td><strong>The experiment could not measure what it claimed to</strong></td><td><strong>no score at all — not zero</strong></td><td>excluded</td><td>measurement-integrity</td></tr>
+<tr><td><span class="chip chip-inv">skipped</span></td><td>Pre-flight refused: no steady state, or below the SLI floor</td><td>no</td><td>excluded</td><td>safety-plane</td></tr>
+<tr><td><span class="chip chip-inv">denied</span></td><td>Policy refused: blast radius, budget gate, protected target</td><td>no</td><td>excluded</td><td>safety-plane</td></tr>
+<tr><td><span class="chip chip-warn">aborted</span></td><td>Halted mid-fault by a probe or the watchdog</td><td>no</td><td>excluded</td><td>safety-plane</td></tr>
+<tr><td><span class="chip chip-bad">error</span></td><td>Framework fault</td><td>no</td><td>excluded</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Three rules span skills and must be applied together:</p>
+<ol class="body-list">
+<li><strong><code>INVALID</code> never scores.</strong> Not as zero — a zero drags the aggregate as if the system failed, when nothing was measured.</li>
+<li><strong>What produces <code>INVALID</code>:</strong> achieved rps below floor · <code>dropped_iterations</code> above ceiling · sample coverage below 90% · any empty or missing series · measurement dependency unavailable.</li>
+<li><strong>Quarantining an experiment opens a new scoring epoch</strong>, because only gating experiments count in the epoch's <code>experiment_set</code> and the score now means something different.</li>
+</ol>
+
+<h3 id="constants">1.2 &nbsp;Threshold constants — one module, and changing any of them opens an epoch</h3>
+<div class="code"><pre><span class="cm"># chaos-framework/src/constants.py</span>
+MIN_SAMPLE_COVERAGE      = 0.90
+DROPPED_CEILING          = 10
+STEADY_STATE_WINDOW_S    = 120
+RECOVERY_HOLD_S          = 30
+THROTTLE_RATIO_CEILING   = 0.05
+PSI_FULL_CEILING         = 0.05
+RESTART_TOLERANCE        = 0
+TARGET_SCRAPE_INTERVAL_S = 5
+SLI_WINDOW_S             = 30
+SAMPLE_INTERVAL_S        = 5
+WEIGHTS = {<span class="kw">"slo_recovery"</span>: 0.35, <span class="kw">"alert_validation"</span>: 0.25,
+           <span class="kw">"resilience_pattern"</span>: 0.25, <span class="kw">"recovery_completeness"</span>: 0.15}
+PASS_THRESHOLD           = 0.80
+FAIL_THRESHOLD           = 0.50
+FLAKINESS_WINDOW         = 20
+MAX_SCORE_STDDEV         = 0.05
+MAX_VERDICT_FLIP_RATE    = 0.05
+BUDGET_WARN_PCT          = 50.0
+BUDGET_FREEZE_PCT        = 80.0
+MAX_BUDGET_BURN_PCT      = 2.0</pre></div>
+</section>
+
+<!-- ════════════ PART 2 ════════════ -->
+<section id="phases">
+<p class="part-label">Part 2</p>
+<h2 class="part-head">Phases</h2>
+<p class="lede">Ordered by dependency, not convenience. §29.1's rule governs: <strong>§16 before everything</strong> — every day spent on differentiators before the load plane exists is a day spent making unmeasured numbers prettier. Each phase ends in a gate: a demonstrable condition, not a checklist. If the gate does not pass, the next phase does not start.</p>
+
+<div class="phase" id="p0">
+  <div class="phase-head"><span class="phase-n">0</span><span class="phase-t">Repo foundation</span><span class="phase-w">~2 days · not in Rev 2</span></div>
+  <div class="phase-body">
+    <p>Rev 2 assumed greenfield. This phase exists because the tree is not.</p>
+    <ol class="body-list">
+      <li><strong>Extract the eight skill bundles</strong> so the project's rules are live:
+        <div class="code" style="margin-top:8px"><pre>cd .claude/skills && <span class="kw">for</span> f <span class="kw">in</span> *.skill; <span class="kw">do</span> unzip -oq <span class="kw">"$f"</span>; <span class="kw">done</span> && rm -f *.skill</pre></div>
+        Produces <code>.claude/skills/&lt;name&gt;/SKILL.md</code> ×8 plus two <code>references/</code> files. Keeping the root <code>.SKILL.md</code> copies costs nothing and makes the rules greppable outside a Claude session.</li>
+      <li><strong>Flatten the service layout</strong> (D-B) — <code>git mv order-api/order-api target-app/order-api</code> and likewise; remove the empty outer directories.</li>
+      <li><strong>Fix the three poms</strong> (D-D, D-H) — add the three missing dependencies; fill <code>&lt;name&gt;</code>/<code>&lt;description&gt;</code>; delete the empty stubs. Verify the BOM before trusting it to resolve <code>resilience4j-spring-boot4</code>.</li>
+      <li><strong>Scaffold the §5.1 directory skeleton</strong> with <code>.gitkeep</code> files.</li>
+      <li><strong>Makefile</strong> with the §27 targets stubbed: <code>kind-up</code>, <code>target-app</code>, <code>load</code>, <code>experiment</code>, <code>dashboard</code>.</li>
+    </ol>
+  </div>
+  <div class="gate"><span class="gate-label">GATE 0</span><p><code>mvn -q package</code> succeeds in all three services with <strong>zero warnings</strong>; <code>ls .claude/skills/*/SKILL.md</code> returns eight paths.</p></div>
+</div>
+
+<div class="phase" id="p1">
+  <div class="phase-head"><span class="phase-n">1</span><span class="phase-t">The target app publishes its state</span><span class="phase-w">Week 1</span></div>
+  <div class="phase-body">
+    <ul>
+      <li><strong>Resilience4j configuration</strong> in each <code>application.yml</code>, with instance names exactly as the experiments assert — <code>paymentService</code>, <code>inventoryService</code>, <code>paymentProcessing</code>. A renamed instance makes the query return empty, which reads as a pass.</li>
+      <li><strong><code>management.metrics.tags.application: ${spring.application.name}</code></strong> on all three (D-G), plus <code>management.endpoints.web.exposure.include: health,prometheus,metrics</code> and ports 8080 / 8081 / 8082 to match §9.1's compose.</li>
+      <li><strong>Controllers, services, and the inter-service call graph</strong> — <code>order-api</code> → <code>payment-service</code> and → <code>inventory-service</code>, with the <code>/api/orders/checkout</code> endpoint the k6 profile drives.</li>
+      <li><strong><code>ResilienceMetricsAssertion implements ApplicationRunner</code></strong> — fails startup when the four required meters are absent, wired into readiness so a rolling update cannot replace a working pod with a blind one. Some meters only register after first exercise: pre-register instances or run a synthetic warm-up before asserting.</li>
+      <li><strong>Retry amplification, preserved deliberately.</strong> <code>maxAttempts: 3</code> against a 5% upstream error rate yields ~14% effective — the project's best single finding. Cap attempts at 2, add a retry budget, <em>or</em> declare the amplified rate in the contract. Do not silently "fix" it.</li>
+      <li><strong><code>@Timed</code> <code>db_query</code> wrapper</strong> in <code>inventory-service</code> (D-I).</li>
+      <li><strong>Chaos fixtures</strong> — <code>crashy-api</code>, <code>hungry-worker</code>, <code>cpu-burner</code>, <code>log-spammer</code>. Fixture names are the <code>chaos_fixture</code> value on each experiment; keep them in sync.</li>
+      <li><strong><code>ephemeral-storage</code> limits</strong> on every pod targeted by disk-fill — without limits the experiment has nothing to exceed and silently does nothing.</li>
+      <li><strong>Dockerfiles ×3</strong>, non-root. <strong>kind 1.36</strong>, <code>kube-prometheus-stack</code> chart-pinned, <strong><code>scrapeInterval: 5s</code> on the target ServiceMonitor only</strong> (<code>scrapeTimeout</code> strictly less), <strong>≥30d retention</strong>.</li>
+      <li><strong>LitmusChaos ≥ 3.30, exact tag pinned.</strong> Expect a higher minor by install time; pin whatever is current.</li>
+      <li><strong>Alert rules</strong> as a <code>PrometheusRule</code> CR, five rules, <strong><code>for: 20s</code></strong> per D-J.</li>
+    </ul>
+  </div>
+  <div class="gate"><span class="gate-label">GATE 1</span>
+    <p><code>resilience4j_circuitbreaker_state{application="order-api",name="paymentService"}</code> returns a value in Prometheus.</p>
+    <p>Then prove the guard works: remove <code>resilience4j-micrometer</code> from <code>order-api</code>'s pom, rebuild, and confirm readiness <strong>fails</strong> rather than the pod coming up blind. Restore.</p>
+  </div>
+</div>
+
+<div class="phase" id="p2">
+  <div class="phase-head"><span class="phase-n">2</span><span class="phase-t">The load plane, before anything else</span><span class="phase-w">Week 2 · Tier 0</span></div>
+  <div class="phase-body">
+    <div class="callout">
+      <span class="co-label">Why this phase is first</span>
+      <p>Rev 1 had no load generator. Every SLI was a ratio over a request counter with nothing generating requests — <code>0/0</code>. A pod kill against an idle cluster reported a perfect recovery because nothing was in flight to fail. <strong>Nothing downstream of this gate means anything until it passes.</strong></p>
+    </div>
+    <ul>
+      <li><strong>k6 Operator v1.0</strong>; load runs in-cluster as a <code>TestRun</code> CR — never from a laptop or a GitHub runner.</li>
+      <li><strong><code>profiles/steady_120rps.js</code></strong> using <code>executor: 'constant-arrival-rate'</code> — the <strong>open</strong> model. Never <code>constant-vus</code>: a closed model couples offered load to system health, so a pod kill that doubles latency halves throughput and the availability ratio can <em>improve</em> while users suffer.</li>
+      <li><strong><code>preAllocatedVUs: 200</code>, <code>maxVUs: 800</code></strong> — headroom so k6 never becomes the bottleneck; thresholds including <code>'dropped_iterations': ['count&lt;10']</code>.</li>
+      <li><strong>k6 remote-writes into the same Prometheus</strong>, because the safety-plane probes query k6's series. Phase 5 depends on this.</li>
+      <li><strong>The validity gate</strong> — <code>is_valid(min_rps_floor)</code> checking achieved rps, <code>dropped_iterations</code>, and sample coverage, each with a distinct <code>invalidity_reason</code>.</li>
+      <li><strong>The dual-source sampler</strong> with <strong>fixed-deadline scheduling</strong> (<code>next_tick += interval</code>), recording <em>actual</em> sample timestamps. Rev 1's <code>await asyncio.sleep(5)</code> after sequential awaits drifted by the query latency and skewed every timeline.</li>
+      <li><strong><code>sli_samples</code></strong> table, partitioned monthly — the retro-scoring substrate, not logging.</li>
+      <li><strong><code>chaosproof_client_server_availability_gap</code></strong> exported: <code>client_error_rate − server_error_rate</code> ≈ requests that never reached a server.</li>
+      <li><strong>The corrected PromQL library</strong> — <code>[30s]</code> windows at 5s scrape, throttle <em>ratio</em> not raw counters, <code>increase(container_oom_events_total[2m])</code> not the flapping gauge, <code>max_over_time</code> for circuit-breaker transitions.</li>
+    </ul>
+  </div>
+  <div class="gate"><span class="gate-label">GATE 2</span>
+    <p>Stop the k6 <code>TestRun</code>, trigger pod-kill, and confirm the verdict is <strong><code>INVALID</code> — achieved 0 rps, floor 90</strong>, not <code>PASS</code>.</p>
+    <p>This is also demo beat 1 (§29.4). Record it now, while it is easy.</p>
+  </div>
+</div>
+
+<div class="phase" id="p3">
+  <div class="phase-head"><span class="phase-n">3</span><span class="phase-t">Hypothesis engine · experiments 1–3 · schema</span><span class="phase-w">Week 3</span></div>
+  <div class="phase-body">
+    <ul>
+      <li><strong>Hypothesis YAML schema</strong> with the two invariant kinds kept distinct: <code>tolerance_s</code> (hold-throughout — describes <em>degradation budget</em>) versus <code>recover_within_s</code> (recovery — expected to breach, must return inside a deadline). Rev 1 scored both with one check, which is why a service that never degraded and one that degraded and recovered scored identically.</li>
+      <li><strong><code>evaluate()</code> with the empty-series rule</strong> — a missing series returns <code>invalid</code>, never a pass. This is the single most common way a home-grown chaos framework lies to you.</li>
+      <li><strong>Per-invariant persistence</strong> to <code>hypothesis_results</code> with <code>worst_value</code>, <code>threshold</code>, <code>breached_for_s</code>, and the evidence window. "The experiment failed" is not actionable; "<code>client_p99_holds</code> breached 800ms for 34s" is.</li>
+      <li><strong>PostgreSQL 18.6 schema</strong> — §6.2 core tables plus <code>migrations/002_rev2.sql</code>'s eight new tables, with <code>uuidv7()</code> keys and <code>weights_denominator</code> on <code>experiment_executions</code>.</li>
+      <li><strong>Experiments 1–3</strong> — pod kill, network latency, network partition — each with a hypothesis, a <code>min_rps_floor</code>, and <code>abort_conditions</code>.</li>
+      <li><strong><code>chaosctl run &lt;experiment&gt;</code></strong> printing per-invariant verdicts.</li>
+    </ul>
+  </div>
+  <div class="gate"><span class="gate-label">GATE 3</span><p><code>chaosctl run pod_kill_payment_svc</code> prints a per-invariant verdict table with <code>worst_value</code> and <code>breached_for_s</code> per invariant.</p></div>
+</div>
+
+<div class="phase" id="p4">
+  <div class="phase-head"><span class="phase-n">4</span><span class="phase-t">Experiments 4–6 · validators · the corrected scorer</span><span class="phase-w">Week 4</span></div>
+  <div class="phase-body">
+    <p>Three of Rev 1's six experiments asserted the wrong thing. A wrong assertion produces a confident wrong verdict.</p>
+    <div class="tw">
+      <table>
+        <thead><tr><th>#</th><th>Experiment</th><th>Assert this</th><th>Not this</th></tr></thead>
+        <tbody>
+          <tr><td>4</td><td>Disk fill</td><td><strong>Pod evicted and rescheduled</strong>, no data loss, alert ≤60s</td><td><s><code>NodeDiskPressure</code> fires</s></td></tr>
+          <tr><td>5</td><td>CPU spike</td><td><strong>Throttle ratio rises, aggregate SLI holds, HPA reacts</strong></td><td><s>"the spike goes away"</s></td></tr>
+          <tr><td>6</td><td>Container kill</td><td>Recovery ≤15s via readiness probe, <strong>CRI / containerd</strong></td><td><s>"Docker-level"</s></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li><strong>Disk fill</strong> consumes the <em>container's</em> ephemeral storage and needs the limits set in Phase 1. Assert <code>increase(kube_pod_status_reason{reason="Evicted"}[5m])</code>. Filling the node's filesystem to assert <code>NodeDiskPressure</code> is a legitimate but <em>different</em> experiment with a different blast radius — do not conflate them.</li>
+      <li><strong>CPU spike — the scaling paradox.</strong> <code>pod-cpu-hog</code> burns CPU <em>inside</em> the target container, so HPA adds healthy replicas while the hogged pod stays hogged; with CPU limits set the hog is throttled and utilisation may barely move. Read <code>horizontalpodautoscalers</code> in pre-flight so the hypothesis knows whether an HPA owns the workload.</li>
+      <li><strong>Container kill</strong> — <code>CONTAINER_RUNTIME: containerd</code>, <code>SOCKET_PATH: /run/containerd/containerd.sock</code>. Say "container-runtime level"; "Docker-level" dates the work by four years.</li>
+      <li><strong>The four validators</strong> as sub-evidence, each declaring <code>applicable</code>.</li>
+      <li><strong>The corrected scorer</strong> — non-applicable checks are <strong>excluded and the remaining weights renormalised</strong>, never given 0.5 partial credit. Rev 1's disk-fill 0.625 is only reachable as <code>0.35 + 0 + (0.5 × 0.25) + 0.15</code>, which systematically rewards experiments having no resilience pattern to validate. Corrected: <strong>0.588</strong>; daily aggregate 87.1% → <strong>86.5%</strong>. Persist <code>weights_denominator</code> so a stored score can be re-derived rather than merely trusted.</li>
+    </ul>
+  </div>
+  <div class="gate"><span class="gate-label">GATE 4</span><p>All six experiments run; re-score the §4 worked example and confirm disk fill lands at <strong>0.588</strong>, not 0.625. No free half-credit anywhere.</p></div>
+</div>
+
+<div class="phase" id="p5">
+  <div class="phase-head"><span class="phase-n">5</span><span class="phase-t">The safety plane</span><span class="phase-w">Week 5 · highest value</span></div>
+  <div class="phase-body">
+    <div class="callout">
+      <span class="co-label">Ordering constraint</span>
+      <p>Build this <em>before</em> the cascade simulator in Phase 11. A fault DAG without a working abort path is the one feature here that could genuinely take down a cluster.</p>
+    </div>
+    <ul>
+      <li><strong>Pre-flight in order</strong> — steady state, SLI floor, blast radius, budget gate, CEL policy. <code>SKIPPED</code> and <code>DENIED</code> are <strong>recorded outcomes with Slack messages and dashboard treatment</strong>, not silent no-ops: "the framework correctly refused to run" proves the guardrails are load-bearing.</li>
+      <li><strong>Blast radius</strong> computed from the <em>current</em> load rate, not a guess. Keep the deliberately simple <code>score()</code> arithmetic — a reviewer must be able to evaluate it mentally.</li>
+      <li><strong>The budget arithmetic</strong>, derivable on a whiteboard: 99.5% over 30d = 12,960 error-seconds; a p95 experiment at 4% error for 45s costs 1.8 error-seconds = 0.014%; daily × 30 = <strong>0.42% of the monthly budget</strong>.</li>
+      <li><strong>Two independent abort paths.</strong> Litmus <code>promProbe</code> with <code>mode: Continuous</code> + <code>stopOnFailure: true</code> — in-band, fast, dies with the runner — <strong>plus</strong> an out-of-band Python watchdog reading the same <code>abort_conditions</code> from the hypothesis YAML, so the two cannot drift. A safety mechanism owned by the process that can crash is not a safety mechanism.
+        <ul style="margin-top:8px">
+          <li><code>mode: EOT</code> is a validator, not a guard.</li>
+          <li><strong>Pin Litmus ≥ 3.28.0</strong> — the stale-config leak across multiple probes of the same type was fixed there, and both probes are <code>promProbe</code>.</li>
+          <li>Probe queries read <strong>k6's</strong> series (Phase 2's remote-write). A guard reading server-side metrics cannot see failures that never reached a server.</li>
+        </ul>
+      </li>
+      <li><strong><code>policy/chaos_safety.yaml</code></strong> evaluated with <code>cel-python</code>: first DENY wins, then REQUIRE_OVERRIDE, else ALLOW. Includes <code>deny-chaosproof-self</code> — <strong>ChaosProof refuses to inject chaos into ChaosProof</strong>, in the policy file rather than in code.</li>
+      <li><strong>The error-budget gate</strong>, three states, counting <strong>all</strong> budget burn including real incidents — the question is how much reliability allowance is left, not how much chaos consumed.</li>
+      <li><strong>The chaos breaker</strong> — 3 aborts in 24h · 2 consecutive <code>INVALID</code> for one experiment (the measurement plane is broken) · K8s API error rate &gt;20% · manual <code>chaosctl freeze</code>. Recovery <code>open → half_open</code> after 6h, one low-radius experiment decides.</li>
+      <li><strong>Cleanup as a saga</strong>, registered <em>before</em> injection, run on every exit path. <code>restore_feature_flags</code> is the highest-stakes step; <code>verify_steady_state</code> is last — cleanup is not done until steady state is back, and if it cannot be, escalate.</li>
+      <li><strong><code>chaos-cleanup</code> CronJob</strong> every 5 minutes as the out-of-band path; alert on <code>chaosproof_orphaned_cleanups_total &gt; 0</code>.</li>
+      <li><strong>Fenced Redis lock</strong> — <code>SET NX chaos:lock:{namespace}</code> with the <strong>execution id as the value</strong>, ownership re-verified before every mutating call. An unfenced lock lets a stalled runner resume and act while a successor holds it, making every result unattributable.</li>
+    </ul>
+  </div>
+  <div class="gate"><span class="gate-label">GATE 5</span>
+    <p>Trigger network-partition with the fallback disabled. Client availability crosses 80%, the probe trips, the fault halts mid-experiment, the cleanup saga runs, and steady state is re-established. Verdict <code>ABORTED</code>.</p>
+    <p>This is demo beat 3 — <em>"It stopped itself. That's the mechanism that would let me run this in production."</em></p>
+  </div>
+</div>
+
+<div class="phase" id="p6">
+  <div class="phase-head"><span class="phase-n">6</span><span class="phase-t">Slack · dashboard · Grafana</span><span class="phase-w">Week 6</span></div>
+  <div class="phase-body">
+    <ul>
+      <li><strong>Slack Block Kit</strong> reports with per-invariant results and a Grafana deep link scoped to the experiment's time range.</li>
+      <li><strong>Next.js 16.3 App Router</strong>, Node 24, dark-first, shadcn/ui copied into <code>components/ui</code>.</li>
+      <li><strong>The <code>Verdict</code> discriminated union drives <code>VerdictBadge</code></strong>, so a new verdict is a compile error rather than a silently grey badge.</li>
+      <li><strong><code>invalid</code> gets its own colour token</strong> — not red, not green. Styling it red implies the <em>system</em> failed when nothing was measured. <code>skipped</code> / <code>denied</code> / <code>aborted</code> are never styled as failures; a red "denied" badge contradicts the project's entire thesis.</li>
+      <li><strong>The epoch-aware trend chart</strong> — segments break at boundaries, boundaries render as labelled vertical lines carrying <code>change_reason</code>, retro-scored points render distinctly, and the cache is <strong>keyed by epoch</strong> or the comparability bug reappears at the presentation layer.</li>
+      <li><strong>The validity strip</strong> — achieved rps against the floor per run, red where <code>INVALID</code>. First thing to show in a demo.</li>
+      <li><strong>Client-vs-server availability overlay</strong> with the gap shaded and explicitly labelled.</li>
+      <li><strong>Recovery timeline</strong> with the <strong>irreducible-latency marker</strong>, so a 71s alert on a 95s floor reads as fired-as-fast-as-physics-allowed rather than slow.</li>
+      <li><strong>Grafana 13.0.x</strong>, dashboards provisioned as JSON in-repo, including Litmus's own metrics (3.29.0+) so a silent platform failure is distinguishable from "everything passed."</li>
+      <li>All four states — loading, empty, error, stale — for every data view.</li>
+    </ul>
+  </div>
+  <div class="gate"><span class="gate-label">GATE 6</span><p>The dashboard renders an epoch boundary as a labelled break in the trend line, and an <code>INVALID</code> run in a colour that is neither the pass nor the fail colour.</p></div>
+</div>
+
+<div class="phase" id="p7">
+  <div class="phase-head"><span class="phase-n">7</span><span class="phase-t">The CI chaos gate</span><span class="phase-w">Week 7 · the headline</span></div>
+  <div class="phase-body">
+    <ul>
+      <li><code>.github/workflows/chaos-gate.yml</code> with the §21.5 job shape: <code>unit</code> → <code>replay-eval</code> → <code>contract-gate</code> → <code>chaos-gate</code> → <code>build-sign-deploy</code>.</li>
+      <li><strong><code>kubectl apply -f k6/testrun-ci.yaml</code> runs before <code>ci_runner</code>.</strong> This is the single most important line in the file — a chaos gate with no load plane reproduces the original defect <em>inside the pipeline</em>, where a green badge hides it.</li>
+      <li>Chart versions pinned; <code>kindest/node:v1.36.0</code>; cluster dump on failure so a flaky chaos test is debuggable.</li>
+      <li><strong>Helm 4 charts</strong> — <code>--wait</code> needs the <strong><code>watch</code></strong> RBAC verb, and server-side apply is the default for new installs.</li>
+      <li><strong>RBAC, justified verb by verb.</strong> The only mutating verb on the target is <code>deployments/scale</code>, held so cleanup can restore replica counts. Deliberately absent: no <code>delete</code> on deployments or PVCs, no <code>secrets</code> outside its own namespace, no RBAC write, no wildcards, no cluster-admin.</li>
+      <li><strong><code>--cov-fail-under=80</code> on the scorer specifically</strong> — it is the one component whose bugs are invisible, because a wrong number looks exactly like a right number.</li>
+    </ul>
+  </div>
+  <div class="gate"><span class="gate-label">GATE 7</span>
+    <p>Open a PR removing <code>@CircuitBreaker</code> from <code>order-api</code>'s payment call. The gate fails with <code>HYPOTHESIS_FALSIFIED — circuit_breaker_opens never activated</code>. Restore it; the gate passes.</p>
+    <p>This is demo beat 5.</p>
+  </div>
+</div>
+
+<div class="phase" id="p8">
+  <div class="phase-head"><span class="phase-n">8</span><span class="phase-t">The MLOps wrapper</span><span class="phase-w">Week 8</span></div>
+  <div class="phase-body">
+    <ul>
+      <li><strong>Scoring epochs</strong> — <code>sha256(weights ‖ gating experiment set ‖ SLO version ‖ scorer version)</code>, stamped on every execution. Epochs are <strong>immutable</strong>; a corrected score is a new row under a new epoch referencing the same bundle, never an <code>UPDATE</code>.</li>
+      <li><strong>Retro-scoring</strong> the last N runs from stored <code>sli_samples</code>. This is the entire reason raw samples are persisted rather than just scores — and it is what makes the 45%→92% story survivable under questioning.</li>
+      <li><strong><code>evals/replay_eval.py</code></strong> — hermetic, no cluster or network, runs in seconds on every PR. Corpus ≥20 bundles including a regression case for every fixed defect: <code>no_load_zero_traffic</code> → <code>invalid</code> · <code>pattern_not_applicable</code> → 0.588 · <code>empty_promql_series</code> → <code>invalid</code> · <code>alert_for_exceeds_slo</code> · <code>dropped_iterations_high</code> · <code>abort_mid_experiment</code> · <code>epoch_mismatch</code> refused.</li>
+      <li><strong>The determinism digest</strong>, frozen per <code>SCORER_VERSION</code>. When a deliberate change moves the digests, the reviewer updates the frozen set <em>in the same PR</em> — which makes every scoring-affecting change visible in review. That is the point, not an inconvenience.</li>
+      <li><strong><code>evals/policy_eval.py</code></strong> (every safety rule has a must-allow and a must-deny case) and <strong><code>evals/alert_rule_lint.py</code></strong> (D-J's arithmetic).</li>
+      <li><strong>Flakiness quarantine</strong> — σ and verdict-flip rate on unchanged <code>git_sha</code>, window 20. A new experiment is <strong>advisory-only until characterised</strong> and earns gating status after 20 clean runs. A flaky one auto-demotes with a Slack notice naming σ and a GitHub issue filed against <em>the experiment</em>. Quarantine is not deletion. Bumping <code>hypothesis.version</code> resets to advisory.</li>
+    </ul>
+  </div>
+  <div class="gate"><span class="gate-label">GATE 8</span><p>Deliberately destabilise one experiment; confirm it auto-demotes to advisory, files an issue, and that the demotion <strong>opens a new epoch</strong>.</p></div>
+</div>
+
+<div class="phase" id="p9">
+  <div class="phase-head"><span class="phase-n">9</span><span class="phase-t">Resilience contracts</span><span class="phase-w">Week 9</span></div>
+  <div class="phase-body">
+    <ul>
+      <li><code>target-app/&lt;service&gt;/resilience-contract.yaml</code> with <code>provides</code>, <code>tolerates</code>, <code>does_not_inflict</code>.</li>
+      <li><strong>The generator emits one experiment per <code>tolerates</code> clause</strong> — the suite is derived from declared architecture, not from a human remembering to write a test. <code>provenance</code> links each generated experiment back to its clause.</li>
+      <li><strong><code>UNTESTED</code> is reported</strong>, so contract coverage is a metric (<code>chaosproof_contract_clause_coverage_ratio</code>) and gaps are visible rather than invisible.</li>
+      <li><strong>A violated clause names the mechanism</strong> where it can — the retry-amplification finding is the project's best single result.</li>
+      <li><strong>The CI contract diff surfaces a weakening to its owners and does not auto-block.</strong> Tooling that forces a conversation beats tooling that forces a merge failure.</li>
+    </ul>
+  </div>
+  <div class="gate"><span class="gate-label">GATE 9</span><p>Reproduce the retry-amplification finding: <code>order-api</code> claims it tolerates 5% from <code>payment-service</code>; inject exactly 5% loss; observe ~12% own error rate; the report names three retry attempts as the mechanism.</p></div>
+</div>
+
+<div class="phase" id="p10">
+  <div class="phase-head"><span class="phase-n">10</span><span class="phase-t">Counterfactual analysis</span><span class="phase-w">Week 10 · staging only</span></div>
+  <div class="phase-body">
+    <ul>
+      <li><strong>The feature-flag plane</strong> — <code>enabled: false</code> by default, exposed only under the <code>chaos-staging</code> profile, never public. Every toggle emits <code>chaosproof_pattern_disabled{name}</code> and a log line, so a cluster left degraded is visible rather than silent.</li>
+      <li><strong>n ≥ 5 per arm, interleaved</strong> (<code>with, without, with, without…</code>) so drift in cluster conditions affects both arms equally.</li>
+      <li><strong>Overlapping IQRs → <code>inconclusive</code></strong>, delta suppressed. Reporting a median delta from overlapping distributions is how dashboards become fiction — and the restraint is itself the interview signal.</li>
+      <li><strong>Staging only, enforced by policy.</strong> The "without" arm gets a <strong>tighter</strong> abort threshold: harder failure is expected, unbounded failure is not.</li>
+      <li><strong>Flag snapshot restored by the cleanup saga</strong>, CronJob as the out-of-band path. A cluster left with its circuit breakers disabled is the worst possible outcome of this project.</li>
+      <li><strong>Counterfactual executions are excluded from the resilience score</strong> — they are deliberately degraded configurations and would poison the trend.</li>
+      <li>Cost assumptions are <strong>editable inputs on the panel</strong>, each labelled <code>[assumption]</code>.</li>
+    </ul>
+  </div>
+  <div class="gate"><span class="gate-label">GATE 10</span><p>The ROI panel shows one pattern with non-overlapping IQRs and a delta, and one with overlapping IQRs rendering <code>inconclusive</code> with <strong>no</strong> delta figure. Both visible at once.</p></div>
+</div>
+
+<div class="phase" id="p11">
+  <div class="phase-head"><span class="phase-n">11</span><span class="phase-t">Cascades · evidence bundles · signing</span><span class="phase-w">Week 11</span></div>
+  <div class="phase-body">
+    <ul>
+      <li><strong>Cascade DAG with <em>conditional</em> triggers</strong>, not stopwatches. <code>db_pressure</code> fires only when DB p99 actually crosses 200ms — needs D-I's <code>db_query_seconds</code>. <strong>If the trigger never trips within <code>timeout_s</code>, that is the most valuable output this feature produces</strong>: the stale-cache fallback absorbed the outage completely, provable rather than assumed.</li>
+      <li><strong>A stage with <code>fault: none</code></strong> — retry storms and queue growth appear <em>after</em> injection stops; a fault-then-immediately-validate loop misses them entirely.</li>
+      <li>Aborting stage 2 while stage 1 is active halts <strong>both</strong>; cleanup runs stage cleanups in reverse dependency order.</li>
+      <li><strong>Content-addressed evidence bundles</strong> — the <code>sha256</code> of the canonical JSON <em>is</em> the run's identity. Write-once, immutable.</li>
+      <li><strong><code>chaosctl replay &lt;sha&gt;</code></strong> — offline: no cluster, no network, no database. Keep the output format stable; it doubles as a golden-file test and the dashboard renders it for the public read-only demo.</li>
+      <li><strong>cosign keyless OIDC</strong> signing of images and bundle attestations.</li>
+      <li><strong>The narrator boundary.</strong> <code>TemplateNarrator</code> is the <strong>default</strong> so the system works with no API key and no network — a portfolio project that breaks without a paid API is a liability in a live demo. <code>LLMNarrator</code> is provider-agnostic with the model id from config, its output discarded if it references any number not in the bundle, discards counted in <code>chaosproof_narrator_discards_total</code>. <strong>The LLM never touches a verdict.</strong></li>
+    </ul>
+  </div>
+  <div class="gate"><span class="gate-label">GATE 11</span><p><code>chaosctl replay &lt;sha&gt;</code> with wifi off produces byte-identical output to the stored bundle. This is demo beat 6.</p></div>
+</div>
+
+<div class="phase" id="p12">
+  <div class="phase-head"><span class="phase-n">12</span><span class="phase-t">Bisection · ADRs · polish</span><span class="phase-w">Week 12</span></div>
+  <div class="phase-body">
+    <ul>
+      <li><strong>Bisection with the σ arithmetic that makes it converge.</strong> Required separation <code>|score_good − score_bad| &gt; 2 × (σ_good + σ_bad)</code>; with σ = 0.06 and a 0.16 regression, one rep fails (0.16 &gt; 0.24 is false) and three reps pass (σ_mean = 0.035 → 0.16 &gt; 0.14). A candidate inside the flakiness band returns <strong><code>abandoned</code></strong>, never a guess — one misclassification sends the binary search down the wrong half permanently.</li>
+      <li><strong>On-demand with a visible cost estimate</strong>, a hard candidate cap, and a nightly window. The Slack regression message carries a button — <em>"Bisect (est. 6 candidates, ~90 min)"</em> — and a human decides. Automatic bisection on every score dip is a denial of service against the daily schedule.</li>
+      <li><strong>Seven ADRs</strong> in <code>docs/adr/</code>.</li>
+      <li><strong><code>EXPERIMENTS.md</code></strong> — the model card: per experiment, its hypothesis, fault, blast radius, abort conditions, σ, and gating status.</li>
+      <li><strong>README</strong> with the §27 architecture diagram, the §29.2 grid <em>including</em> the "where they win" paragraph, and the deliberate-omissions list.</li>
+      <li><strong>Two-tier public deploy</strong> — read-only build with trigger controls absent via a <strong>build-time flag</strong>, not merely disabled. A control that 404s invites someone to find out why.</li>
+      <li><strong>Rehearse the §29.4 demo out loud.</strong> The order is deliberate: <strong>lead with your own bug.</strong></li>
+    </ul>
+  </div>
+  <div class="gate"><span class="gate-label">GATE 12</span><p>The 5-minute demo runs end to end without a recovery, and the README's grid contains a paragraph naming where each competitor wins.</p></div>
+</div>
+</section>
+
+<!-- ════════════ PART 3 ════════════ -->
+<section id="invariants">
+<p class="part-label">Part 3</p>
+<h2 class="part-head">Cross-cutting invariants</h2>
+<p class="lede">Consolidated from all eight skills and deduplicated. These hold in every phase.</p>
+
+<div class="inv-group">
+  <h4>Measurement</h4>
+  <ol class="inv">
+    <li>Load starts before pre-flight, which runs before injection — in CI too.</li>
+    <li>A missing or empty series is never a passing series.</li>
+    <li>Never widen a rate window to make a query "work." If the window must exceed the SLO to return data, the SLO is unmeasurable and <em>that is the finding</em>.</li>
+    <li>Never compute availability from server-side metrics alone.</li>
+    <li><code>INVALID</code> never contributes to a score — not as zero, not as partial credit.</li>
+    <li>Never raise scrape frequency cluster-wide to fix one measurement.</li>
+  </ol>
+</div>
+
+<div class="inv-group">
+  <h4>Safety</h4>
+  <ol class="inv" start="7" style="counter-reset:inv 6">
+    <li>Never inject before pre-flight returns <code>proceed</code>.</li>
+    <li>Never ship an experiment without <code>abort_conditions</code>.</li>
+    <li>Never let cleanup depend only on the happy path — the CronJob is not optional.</li>
+    <li>Never widen the policy file to make a run succeed. A denial is a result.</li>
+    <li>Never target the <code>chaosproof</code> namespace.</li>
+    <li>Never run counterfactual experiments outside <code>chaos-staging</code>.</li>
+  </ol>
+</div>
+
+<div class="inv-group">
+  <h4>Scoring and quality</h4>
+  <ol class="inv" style="counter-reset:inv 12">
+    <li>Never change a weight, threshold, SLO, or the scorer without opening a new epoch.</li>
+    <li>Never <code>UPDATE</code> a stored score — new row, new epoch, same bundle.</li>
+    <li>Never let a new or reflagged experiment gate a merge before 20 clean runs.</li>
+    <li>Never delete a flaky experiment — quarantine and fix it.</li>
+    <li>Never add a scoring change without a corpus case proving the new behaviour.</li>
+    <li>Never let the narrator emit a number that isn't in the bundle.</li>
+  </ol>
+</div>
+
+<div class="inv-group">
+  <h4>Target application</h4>
+  <ol class="inv" style="counter-reset:inv 18">
+    <li>Never remove <code>resilience4j-micrometer</code> or the startup assertion.</li>
+    <li>Never rename a pattern instance without updating the experiments that assert on it.</li>
+    <li>Never unset <code>metrics.tags.application</code>.</li>
+    <li>Never enable the flag plane outside <code>chaos-staging</code>.</li>
+    <li>Never use the <code>-spring-boot3</code> Resilience4j starter on Spring Boot 4.</li>
+    <li>Never add retry without accounting for amplification in the contract.</li>
+  </ol>
+</div>
+
+<div class="inv-group">
+  <h4>Platform</h4>
+  <ol class="inv" style="counter-reset:inv 24">
+    <li>Never pin Litmus as <code>3.x</code> — pin the exact tag, and know why 3.28.0 and 3.29.0 matter.</li>
+    <li>Never use <code>:latest</code> anywhere, including compose and chart values.</li>
+    <li>Never grant the framework destructive verbs on the target — that is Litmus's job, scoped per experiment.</li>
+    <li>Never shorten <code>terminationGracePeriodSeconds</code> below what cleanup needs (900s).</li>
+  </ol>
+</div>
+
+<div class="inv-group">
+  <h4>Dashboard</h4>
+  <ol class="inv" style="counter-reset:inv 28">
+    <li>Never style <code>invalid</code> as a failure or a pass.</li>
+    <li>Never connect a trend line across an epoch boundary.</li>
+    <li>Never show a counterfactual delta when the IQRs overlap.</li>
+    <li>Never render a bare score without its epoch.</li>
+    <li>Never ship trigger controls in the public build.</li>
+  </ol>
+</div>
+</section>
+
+<!-- ════════════ PART 4 ════════════ -->
+<section id="risks">
+<p class="part-label">Part 4</p>
+<h2 class="part-head">Risk register</h2>
+<div class="tw">
+<table>
+<thead><tr><th>Risk</th><th>Why it matters</th><th>Mitigation</th></tr></thead>
+<tbody>
+<tr>
+  <td>The three-skill asymmetry</td>
+  <td><code>INVALID</code> never scores (hypothesis-engine), what produces <code>INVALID</code> (measurement-integrity), and quarantine opening an epoch (mlops-quality) only make sense together. A session loading one could apply half the rule — treating <code>INVALID</code> as zero, for instance.</td>
+  <td>Part 1 is the shared contract. If the split shows up in practice, promote the verdict vocabulary into a shared <code>references/</code> file rather than merging the skills.</td>
+</tr>
+<tr>
+  <td>Resilience4j BOM omission (#2427)</td>
+  <td>BOM-managed builds fail to resolve <code>resilience4j-spring-boot4</code>, and the failure looks like a Spring Framework 7 incompatibility rather than a missing dependency.</td>
+  <td>Verify the BOM in Phase 0; pin <code>${resilience4j.version}</code> explicitly on both modules if it is still missing.</td>
+</tr>
+<tr>
+  <td>Litmus version drift</td>
+  <td>Monthly cadence means any minor named here is a floor, not a target. 3.28.0 (same-type probe config leak) and 3.29.0 (duplicate triggers under concurrent reconciles) are load-bearing for the safety plane and serial execution respectively.</td>
+  <td>Pin whatever is current at install; assert the version in CI; never <code>3.x</code>.</td>
+</tr>
+<tr>
+  <td>Node starvation producing <code>INVALID</code> runs</td>
+  <td>The load plane plus 5s scraping needs real headroom. An experiment that fails because the <em>node</em> was starved produces <code>INVALID</code>, not insight.</td>
+  <td><code>t3.large</code>, not <code>t3.medium</code>. Budget $0–70/month.</td>
+</tr>
+<tr>
+  <td>The headline is in the air</td>
+  <td>At KubeCon India in June 2026 the most common Litmus booth question was how to shift chaos left into CI — so the CI gate alone is no longer differentiating.</td>
+  <td>Lead with the verification layer, and specifically <strong>flakiness quarantine</strong>: it is the answer to "why would your team still have this enabled in six months."</td>
+</tr>
+<tr>
+  <td>xk6-disruptor</td>
+  <td>A thin version of the load-plus-fault idea already exists inside k6.</td>
+  <td>Say so before an interviewer does — it is already in §29.2's grid.</td>
+</tr>
+<tr>
+  <td>Scale is the honest weakness</td>
+  <td>Six experiments a day, three services, one cluster. No multi-tenancy, no chaos-injection HA, no VM chaos.</td>
+  <td>Q23's answer. Flipkart's KubeCon India talk covers exactly those four problems on top of Litmus, and reading it is how you know what you have not solved. Cite it as <em>"their talk describes…"</em>, not as your own analysis.</td>
+</tr>
+<tr>
+  <td><code>resilience4j-micrometer</code> silently absent</td>
+  <td>Every pattern check reports <code>applicable=false</code> while the framework looks like it is working.</td>
+  <td>Gate 1 proves the startup assertion catches it. Keep that test.</td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ════════════ PART 5 ════════════ -->
+<section id="deferred">
+<p class="part-label">Part 5</p>
+<h2 class="part-head">Deferred, deliberately</h2>
+<ul>
+<li><strong><code>references/security-and-api.md</code> — not warranted yet.</strong> The REST table, <code>chaosctl</code> surface, and metric list already live in <code>chaosproof-mlops-quality</code>'s reference file. The only genuine secret handling is one fine-grained GitHub PAT (issues + PR, one repo) for the contract-diff job, plus RBAC and cosign <em>keyless</em> signing — which by definition has no key material to scope. ChaosProof receives no inbound webhooks; it is a net consumer of Prometheus and Alertmanager. <strong>What would change this:</strong> authenticated dashboard actions beyond the read-only build, or a Slack interactive/slash-command endpoint needing signature verification. Until then, a short "Secrets and Scopes" section in <code>chaosproof-litmus-platform</code> is the right size.</li>
+<li><strong>Litmus MCP server</strong> — one line in README future-work. Worth <em>not</em> building: a natural-language interface to fault injection is a safety surface, not a feature.</li>
+<li><strong>Multi-region, security chaos, game-day scoring</strong> — <code>docs/future-work/</code> as ADRs.</li>
+</ul>
+</section>
+
+<!-- ════════════ PART 6 ════════════ -->
+<section id="next">
+<p class="part-label">Part 6</p>
+<h2 class="part-head">Worth testing next</h2>
+<p>Ask one of the extracted skills to add a new experiment — a DNS-chaos fault, say — and check whether <code>chaosproof-experiment-suite</code> actually forces a <code>min_rps_floor</code>, abort conditions, and advisory-only registration, or whether a plausible-looking experiment YAML slips through without them.</p>
+<p>That is the failure mode these skill descriptions are built to prevent, and it is cheap to verify.</p>
+</section>
+
+<footer>
+  <span>ChaosProof · Build Order · Rev 2 derived</span>
+  <span>Audit verified against working tree at 8dd5ef1</span>
+  <span>23 August 2026</span>
+</footer>
+
+</main>
+</div>
