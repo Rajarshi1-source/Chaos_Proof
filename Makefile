@@ -7,6 +7,7 @@ KIND_NODE        := kindest/node:v1.36.1
 KPS_CHART_VER    := 88.5.3
 LITMUS_CHART_VER := 3.31.0
 K6OP_CHART_VER   := 4.6.0
+METRICS_SERVER_VER := v0.8.0   # HPA needs it; kind needs --kubelet-insecure-tls
 CLUSTER          := chaosproof
 SERVICES         := order-api payment-service inventory-service
 
@@ -26,7 +27,10 @@ kind-up:        ## kind 1.36 + kube-prometheus-stack (5s scrape on target) + Lit
 	helm repo add grafana https://grafana.github.io/helm-charts
 	helm install k6-operator grafana/k6-operator --version $(K6OP_CHART_VER) \
 	  --namespace k6-operator --create-namespace --wait --timeout 5m
-	kubectl apply -f litmus-experiments/pod-delete-fault-3.31.yaml -n target-app
+	kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/$(METRICS_SERVER_VER)/components.yaml
+	kubectl patch deployment metrics-server -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+	kubectl get namespace target-app >/dev/null 2>&1 || kubectl create namespace target-app
+	for f in litmus-experiments/*-fault-3.31.yaml; do kubectl apply -f $$f -n target-app; done
 	kubectl apply -f litmus-experiments/pod-delete-rbac.yaml
 
 target-app:     ## Build + load the three Spring Boot 4 service images, deploy the chart

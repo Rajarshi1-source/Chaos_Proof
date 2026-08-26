@@ -18,10 +18,18 @@ from ..db import persist_run
 from ..hypothesis.engine import HypothesisVerdict, evaluate, parse_invariants
 from ..integrations.litmus import LitmusClient
 from ..integrations.prometheus import PrometheusClient
+from ..integrations.alertmanager import AlertmanagerClient
 from ..measurement.sampler import DualSourceSampler
 from ..measurement.validity import LoadFacts
+from ..scoring import scorer
+from ..validators import checks as V
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+
+
+class PreflightSkip(Exception):
+    """Pre-flight refused to run. SKIPPED is a recorded outcome, not a silent
+    no-op — 'the framework correctly refused' proves the guardrails are real."""
 
 
 def _git_sha() -> str | None:
@@ -33,12 +41,24 @@ def _git_sha() -> str | None:
         return None
 
 
-def run(spec_path: pathlib.Path, prom_url: str, testrun: str,
-        on_tick=None) -> tuple[str, HypothesisVerdict, int]:
-    """Returns (verdict_string, HypothesisVerdict, execution_id)."""
+def hpa_exists(namespace: str, name: str) -> bool:
+    """Pre-flight: does an HPA own this workload? The CPU-spike hypothesis only
+    makes sense when one does — asserting an autoscaler reaction with no
+    autoscaler installed would falsify a healthy system every run."""
+    proc = subprocess.run(
+        ["kubectl", "get", "hpa", name, "-n", namespace, "--ignore-not-found",
+         "-o", "name"], capture_output=True, text=True, timeout=30)
+    return proc.returncode == 0 and bool(proc.stdout.strip())
+
+
+def run(spec_path: pathlib.Path, prom_url: str, testrun: str, alertmanager_url: str,
+        on_tick=None):
+    """Returns (engine, HypothesisVerdict, execution_id, facts, chaos, samples,
+    check_list, ScoreResult)."""
     spec = yaml.safe_load(spec_path.read_text())["experiment"]
     prom = PrometheusClient(prom_url)
     litmus = LitmusClient()
+    alerts = AlertmanagerClient(alertmanager_url)
 
     ns = spec["target"]["namespace"]
     app = spec["target"]["app"]
@@ -51,7 +71,14 @@ def run(spec_path: pathlib.Path, prom_url: str, testrun: str,
     script_sha = hashlib.sha256(script.read_bytes()).hexdigest()
 
     sampler = DualSourceSampler(prom, queries.client_queries(testrun),
-                                queries.server_queries())
+                                queries.server_queries(target=app))
+
+    # STAGE 1 (partial) — pre-flight. The full gate lands in Phase 5; the HPA
+    # precondition is here because experiment 5's hypothesis depends on it.
+    if spec.get("requires_hpa") and not hpa_exists(ns, app):
+        raise PreflightSkip(
+            f"{spec['name']} assumes an HPA owns {app}; none found — the "
+            "hypothesis asserts an autoscaler reaction that cannot happen")
 
     # STAGE 3 — inject (pre-flight slots in front of this in Phase 5)
     engine = litmus.apply_fault(spec["litmus_fault"], ns, app, fault_s,
@@ -75,6 +102,23 @@ def run(spec_path: pathlib.Path, prom_url: str, testrun: str,
     )
     verdict = evaluate(invariants, samples, facts, floor)
 
+    # STAGE 5b — the four validators, as sub-evidence feeding the score.
+    expected_alerts = spec.get("expected_alerts") or []
+    fired = {name: alerts.first_fired_at(name, fault_injected_at)
+             for name in expected_alerts}
+    check_list = [
+        V.slo_recovery(samples),
+        V.alert_validation(expected_alerts, fired, fault_injected_at),
+        V.resilience_pattern(samples, spec.get("pattern_metric"),
+                             spec.get("pattern_name")),
+        V.recovery_completeness(samples),
+    ]
+    # An unmeasurable window poisons the checks too: INVALID never scores.
+    if verdict.verdict == "invalid":
+        for c in check_list:
+            c.outcome, c.score = "invalid", None
+    score = scorer.calculate(check_list)
+
     # STAGE 6 — persist everything in one transaction
     execution_id = persist_run(
         spec=spec,
@@ -87,6 +131,8 @@ def run(spec_path: pathlib.Path, prom_url: str, testrun: str,
         script_sha256=script_sha,
         git_sha=_git_sha(),
         invariant_outcomes=verdict.outcomes,
+        check_list=check_list,
+        score=score,
     )
 
-    return engine, verdict, execution_id, facts, chaos, samples
+    return engine, verdict, execution_id, facts, chaos, samples, check_list, score

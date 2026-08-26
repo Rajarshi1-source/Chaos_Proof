@@ -59,9 +59,58 @@ SERVER = {
 }
 
 
+# --- target-scoped server queries (experiments 4-6) ----------------------------
+# Parameterised by the experiment's target deployment. Every one of these is
+# sampled every tick and becomes evidence, whether or not an invariant reads it.
+TARGET_SCOPED = {
+    # Replicas the target deployment currently has Available.
+    "target_replicas_available": (
+        'sum(kube_deployment_status_replicas_available'
+        '{namespace="target-app",deployment="$TARGET"}) or vector(0)'
+    ),
+    # Container restarts — the container-kill assertion, and a completeness signal.
+    "target_restarts": (
+        'sum(kube_pod_container_status_restarts_total'
+        '{namespace="target-app",pod=~"$TARGET-.*"}) or vector(0)'
+    ),
+    # CPU throttle RATIO — dimensionless. NEVER raw throttled-period counters:
+    # they scale with replica count and window length, which makes the check
+    # meaningless (measurement-integrity: looks-right-but-wrong table).
+    "throttle_ratio": (
+        f'(sum(rate(container_cpu_cfs_throttled_periods_total'
+        f'{{namespace="target-app",pod=~"$TARGET-.*",container="$TARGET"}}[{W}]))'
+        f' / '
+        f'clamp_min(sum(rate(container_cpu_cfs_periods_total'
+        f'{{namespace="target-app",pod=~"$TARGET-.*",container="$TARGET"}}[{W}])), 0.001))'
+        f' or vector(0)'
+    ),
+    # Pods currently marked Evicted — the CORRECT disk-fill assertion.
+    # kube_pod_status_reason is a GAUGE (1 while the pod carries the reason), so
+    # a plain sum is the count of evicted pods. increase() on a gauge that springs
+    # into existence is unreliable; the gauge form is deterministic.
+    "evicted_pods": (
+        'sum(kube_pod_status_reason'
+        '{namespace="target-app",reason="Evicted"}) or vector(0)'
+    ),
+    # HPA current replicas — the CPU-spike experiment reads this to see the
+    # autoscaler react. Absent unless an HPA owns the workload.
+    "hpa_replicas": (
+        'sum(kube_horizontalpodautoscaler_status_current_replicas'
+        '{namespace="target-app",horizontalpodautoscaler="$TARGET"}) or vector(0)'
+    ),
+}
+
+
 def client_queries(testrun: str) -> dict[str, str]:
     return {k: v.replace("$TESTRUN", testrun) for k, v in CLIENT.items()}
 
 
-def server_queries() -> dict[str, str]:
-    return dict(SERVER)
+def server_queries(target: str | None = None) -> dict[str, str]:
+    """Shared server queries plus, when a target deployment is given, the
+    target-scoped ones. `payment_replicas_available` is retained verbatim so
+    experiments 1-3 keep their hypothesis version — renaming a metric an
+    invariant reads would silently return empty, which reads as a pass."""
+    out = dict(SERVER)
+    if target:
+        out.update({k: v.replace("$TARGET", target) for k, v in TARGET_SCOPED.items()})
+    return out

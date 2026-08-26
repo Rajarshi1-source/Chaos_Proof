@@ -132,7 +132,7 @@ def evaluate(hypothesis, samples: SampleSet) -> HypothesisVerdict:
 
 ## The scorer — renormalise, never partial-credit
 
-Rev 1 silently scored non-applicable checks as 0.5. The proof is arithmetic: its worked example put disk-fill at 0.625 with `pattern=N/A`, and 0.625 is only reachable as `0.35 + 0 + (0.5 × 0.25) + 0.15`. That **systematically rewards experiments having no resilience pattern to validate** — an inversion a sharp interviewer will catch.
+Rev 1 silently scored non-applicable checks as 0.5. The proof is arithmetic: its worked example put disk-fill at 0.625 with `pattern=N/A`, and 0.625 is only reachable as `0.35 + 0 + (0.5 × 0.25) + 0.15`. The 0.5 is **unrelated to any evidence**, so it skews an experiment in whichever direction its other checks happen to sit — worse than a consistent bias, because no offset corrects it. It also makes scores non-comparable across experiment types, which is what an interviewer will catch.
 
 ```python
 # chaos-framework/src/scoring/score_calculator.py
@@ -167,7 +167,9 @@ Rules:
 - **`INVALID` poisons the whole experiment** — no score, not a zero. A zero would drag the aggregate as if the system failed, when in fact nothing was measured.
 - **Never introduce a fifth weight without opening a new scoring epoch** (see `chaosproof-mlops-quality`).
 
-Re-scoring the original example shows the size of the error: disk-fill 0.625 → **0.588**, daily aggregate 87.1% → **86.5%**. The number is small; the systematic direction is the defect.
+Re-scoring the original example (`evals/scoring_worked_example.py`, verified 26 Aug 2026): disk-fill 0.625 → **0.6667** (`0.50 / 0.75`), daily aggregate 87.5% → **88.2%**.
+
+**Three arithmetic corrections to the source material, found by running it.** The published 0.588 is `0.50 / 0.85` — the 0.15 completeness weight excluded instead of the 0.25 pattern weight. §4's Rev 1 column also mis-states Network Partition as 0.725 when the weights give 0.750, which moves the Rev 1 daily from 87.1% to 87.5%. And the direction **flips**: here the applicable checks average 0.667, above the arbitrary 0.5, so the partial credit was deflating this experiment. Derive these numbers, never copy them — a corpus case that asserts a published figure pins the typo instead of the behaviour.
 
 ## The runner — six stages, gates structurally in front
 

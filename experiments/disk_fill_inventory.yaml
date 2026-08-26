@@ -1,0 +1,84 @@
+# Experiment 4 — Disk fill. CORRECTED ASSERTION.
+#
+# Litmus `disk-fill` consumes the CONTAINER'S ephemeral storage and requires
+# `ephemeral-storage` limits on the pod (set in Phase 1: 1Gi limit / 512Mi
+# request). Exceeding the limit triggers POD EVICTION by the kubelet — not
+# necessarily node-level NodeDiskPressure. Those are two different failure modes
+# with two different alerts and two different blast radii; asserting the node
+# condition here would produce a confident wrong verdict.
+#
+# This is also the canonical `applicable=false` case for the resilience-pattern
+# check: filling a disk exercises no Resilience4j pattern. That exclusion is
+# exactly why the scorer renormalises instead of awarding partial credit.
+experiment:
+  name: disk_fill_inventory
+  litmus_fault: disk-fill
+  target: { namespace: target-app, app: inventory-service }
+  fault_duration_s: 60
+  recovery_window_s: 180
+  chaos_fixture: log-spammer
+  params:
+    FILL_PERCENTAGE: "100"        # of the container's ephemeral-storage LIMIT
+    TARGET_CONTAINER: "inventory-service"
+
+  load_profile: profiles/steady_120rps.js
+  min_rps_floor: 90
+
+  expected_alerts: [TargetPodEvicted]
+  # No resilience pattern to validate -> the check reports applicable=false.
+  pattern_metric: null
+  pattern_name: null
+
+  hypothesis:
+    version: 1
+    description: >
+      When inventory-service's ephemeral storage is filled past its 1Gi limit, the
+      kubelet EVICTS the offending pod and the ReplicaSet reschedules it. Client
+      availability stays >=99% throughout because the surviving replica absorbs
+      traffic via the Service endpoints, and order-api's retry to inventory covers
+      the endpoint-convergence gap. The deployment returns to 2 Available replicas
+      within 180s (JVM cold start dominates the reschedule).
+
+    invariants:
+      - name: pod_evicted
+        source: prometheus
+        metric: evicted_pods
+        comparator: ">="
+        threshold: 1
+        recover_within_s: 150       # RECOVERY: starts at 0 (breaching), must reach 1.
+                                    # If this never fires, disk-fill did not do what
+                                    # it claims and the verdict is FALSIFIED - which
+                                    # is the honest outcome, not a tuning target.
+
+      - name: replicas_restored
+        source: prometheus
+        metric: target_replicas_available
+        comparator: ">="
+        threshold: 2
+        recover_within_s: 180
+
+      - name: client_availability_holds
+        source: k6
+        metric: client_availability
+        comparator: ">="
+        threshold: 0.990
+        tolerance_s: 20             # endpoint convergence after the eviction
+
+      - name: no_server_5xx_storm
+        source: prometheus
+        metric: server_5xx_rate
+        comparator: "<="
+        threshold: 1.0
+        tolerance_s: 20
+
+    abort_conditions:
+      - name: availability_collapse
+        source: k6
+        metric: client_availability
+        comparator: "<"
+        threshold: 0.80
+      - name: unrelated_namespace_impact
+        source: prometheus
+        metric: other_namespace_5xx_rate
+        comparator: ">"
+        threshold: 0.5

@@ -565,12 +565,17 @@ DAILY SCORE = AVG(experiment_score(E) for all E) × 100
 Example:
   Pod Kill:         recovery=1.0, alert=1.0, pattern=1.0, complete=1.0 → 1.0
   Network Latency:  recovery=1.0, alert=1.0, pattern=0.5, complete=1.0 → 0.875
-  Network Partition: recovery=0.5, alert=1.0, pattern=1.0, complete=0.5 → 0.725
+  Network Partition: recovery=0.5, alert=1.0, pattern=1.0, complete=0.5 → 0.750
   Disk Fill:        recovery=1.0, alert=0.0, pattern=N/A,  complete=1.0 → 0.625
   CPU Spike:        recovery=1.0, alert=1.0, pattern=1.0, complete=1.0 → 1.0
   Container Kill:   recovery=1.0, alert=1.0, pattern=1.0, complete=1.0 → 1.0
 
-  Daily Score = AVG(1.0, 0.875, 0.725, 0.625, 1.0, 1.0) × 100 = 87.1%
+  Daily Score = AVG(1.0, 0.875, 0.750, 0.625, 1.0, 1.0) × 100 = 87.5%
+
+  [ARITHMETIC CORRECTED 26 Aug 2026 by evals/scoring_worked_example.py.
+   Network Partition published as 0.725; the weights give
+   0.35(0.5) + 0.25(1.0) + 0.25(1.0) + 0.15(0.5) = 0.750, moving the
+   daily aggregate from the published 87.1% to 87.5%.]
 ```
 
 ---
@@ -1767,11 +1772,13 @@ Re-scoring Rev 1's own worked example makes the size of the error visible:
 
 | Experiment | Rev 1 score | Rev 2 score | Why it moved |
 |---|---|---|---|
-| Disk Fill (`pattern` not applicable, alert missed) | 0.625 | **0.588** | `(0.35×1.0 + 0.25×0.0 + 0.15×1.0) / 0.75` — no free half-credit |
-| Network Partition | 0.725 | 0.725 | All four checks applicable; unchanged |
-| Daily aggregate (six experiments) | 87.1% | **86.5%** | One inflated experiment drags the mean |
+| Disk Fill (`pattern` not applicable, alert missed) | 0.625 | **0.6667** | `(0.35×1.0 + 0.25×0.0 + 0.15×1.0) / 0.75` — no free half-credit |
+| Network Partition | 0.750 | 0.750 | All four checks applicable; unchanged |
+| Daily aggregate (six experiments) | 87.5% | **88.2%** | The half-credit was *deflating* this experiment |
 
-0.6 points looks small. It is not the point: the point is that **the inflation is systematic, applies to exactly the experiments with no pattern to validate, and silently rewards not having a resilience pattern.** That inversion is what an interviewer will catch.
+> **Arithmetic corrected 26 Aug 2026**, verified by `evals/scoring_worked_example.py`, which derives every figure from the weights rather than copying it. Three slips in the original: the Rev 2 disk-fill value was published as **0.588**, which is `0.50 / 0.85` — the 0.15 completeness weight excluded instead of the 0.25 pattern weight; the correct renormalisation is `0.50 / 0.75` = **0.6667**. Network Partition was published as 0.725 where the weights give 0.750, moving the Rev 1 daily from 87.1% to 87.5%. And the **direction flips**: disk-fill's applicable checks average 0.667, *above* the arbitrary 0.5, so the partial credit was deflating that experiment rather than inflating it.
+
+The size of the move is not the point, and neither is its sign. The point is that **0.5 is unrelated to any evidence**: it applies to exactly the experiments with no pattern to validate, and it pushes each one in whichever direction its remaining checks happen to sit — up when they average below 0.5, down when they average above, as disk-fill's 0.667 does here. That is worse than a consistent bias, because no offset corrects it, and it makes scores non-comparable across experiment types. That non-comparability is what an interviewer will catch.
 
 ### C.5 D5 — the missing safety check, made real
 

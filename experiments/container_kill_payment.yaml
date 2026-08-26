@@ -1,0 +1,84 @@
+# Experiment 6 — Container kill. CORRECTED ASSERTION: CONTAINER-RUNTIME level.
+#
+# The Docker shim was removed in Kubernetes 1.24; kind nodes run containerd.
+# Litmus `container-kill` talks to the CRI socket directly — say "container-runtime
+# level", never "Docker-level", which dates the work by four years.
+#
+# DEVIATION FROM REV 1, stated deliberately: Rev 1 asserted "recovery <= 15s via
+# readiness probe". That number came from a single-replica assumption and is not
+# physical for a JVM — a killed Spring Boot container needs 20-40s to boot and pass
+# readiness, so a 15s deadline would falsify a healthy system on every run. Worse,
+# with 2 replicas behind a Service the interesting claim is not how fast the killed
+# container returns but that the client never notices it went away. That is what is
+# asserted here; the container's return is asserted on a deadline a JVM can meet.
+experiment:
+  name: container_kill_payment
+  litmus_fault: container-kill
+  target: { namespace: target-app, app: payment-service }
+  fault_duration_s: 30
+  recovery_window_s: 180
+  chaos_fixture: crashy-api
+  params:
+    TARGET_CONTAINER: "payment-service"
+    CONTAINER_RUNTIME: "containerd"
+    SOCKET_PATH: "/run/containerd/containerd.sock"
+    PODS_AFFECTED_PERC: "50"      # one of two replicas
+
+  load_profile: profiles/steady_120rps.js
+  min_rps_floor: 90
+
+  expected_alerts: [TargetReplicasUnavailable]
+  pattern_metric: null            # the surviving replica serves; the breaker should
+  pattern_name: null              # NOT need to open, so no pattern is asserted
+
+  hypothesis:
+    version: 1
+    description: >
+      When one payment-service container is killed at the container-runtime level,
+      the kubelet restarts it in place and the readiness probe flips it out of the
+      Service endpoints while it boots. Client availability stays >=99% throughout —
+      the surviving replica absorbs the traffic and order-api's circuit breaker never
+      needs to open. The restart is observable as a container restart count, and the
+      deployment returns to 2 Available replicas within 150s (JVM boot dominates).
+
+    invariants:
+      - name: client_availability_holds
+        source: k6
+        metric: client_availability
+        comparator: ">="
+        threshold: 0.990
+        tolerance_s: 10           # readiness-probe eviction from endpoints is fast
+
+      - name: container_restarted
+        source: prometheus
+        metric: target_restarts
+        comparator: ">="
+        threshold: 1
+        recover_within_s: 120     # RECOVERY: proves the kill actually landed at the
+                                  # CRI level rather than the fault silently no-oping
+
+      - name: replicas_restored
+        source: prometheus
+        metric: target_replicas_available
+        comparator: ">="
+        threshold: 2
+        recover_within_s: 150     # a JVM cold start, not Rev 1's 15s
+
+      - name: no_server_5xx_storm
+        source: prometheus
+        metric: server_5xx_rate
+        comparator: "<="
+        threshold: 1.0
+        tolerance_s: 10
+
+    abort_conditions:
+      - name: availability_collapse
+        source: k6
+        metric: client_availability
+        comparator: "<"
+        threshold: 0.80
+      - name: unrelated_namespace_impact
+        source: prometheus
+        metric: other_namespace_5xx_rate
+        comparator: ">"
+        threshold: 0.5

@@ -7,6 +7,8 @@ import os
 
 import psycopg
 
+from .scoring import scorer
+
 DSN = os.environ.get(
     "CHAOSPROOF_DB",
     "host=localhost port=5433 dbname=chaosproof user=chaosproof password=chaosproof",
@@ -44,10 +46,28 @@ def ensure_hypothesis(cur, experiment_type_id: int, version: int, description: s
     return cur.fetchone()[0]
 
 
+def ensure_epoch(cur, gating_experiments: list[str], change_reason: str) -> int:
+    """A scoring epoch is the hash of everything that changes the MEANING of a
+    score: weights, the GATING experiment set, the SLO version, the scorer
+    version. Epochs are immutable — a change opens a new one, never an UPDATE,
+    which is what keeps a trend line from silently spanning a scorer edit."""
+    sha = scorer.epoch_sha256(gating_experiments)
+    cur.execute(
+        """INSERT INTO scoring_epochs (epoch_sha256, weights, experiment_set,
+                                       slo_version, scorer_version, change_reason)
+           VALUES (%s, %s, %s, %s, %s, %s)
+           ON CONFLICT (epoch_sha256) DO NOTHING""",
+        (sha, json.dumps(scorer.WEIGHTS), sorted(gating_experiments),
+         scorer.SLO_VERSION, scorer.SCORER_VERSION, change_reason))
+    cur.execute("SELECT id FROM scoring_epochs WHERE epoch_sha256 = %s", (sha,))
+    return cur.fetchone()[0]
+
+
 def persist_run(*, spec: dict, verdict: str | None, reason: str | None,
                 fault_injected_at: float, finished_at: float,
                 load_facts, samples, script_sha256: str, git_sha: str | None,
-                invariant_outcomes: list) -> int:
+                invariant_outcomes: list, check_list: list | None = None,
+                score=None) -> int:
     """Everything about one run, one transaction. verdict None means the run was
     valid but unevaluated — never invent HELD."""
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
@@ -60,14 +80,27 @@ def persist_run(*, spec: dict, verdict: str | None, reason: str | None,
             hyp["invariants"], float(spec["min_rps_floor"]),
             spec.get("abort_conditions") or hyp.get("abort_conditions") or [])
 
+        # Only GATING experiments count in the epoch's experiment_set; a new
+        # experiment is advisory until characterised (mlops-quality), so Phase 4's
+        # set is deliberately empty and every experiment here is advisory.
+        cur.execute("SELECT t.name FROM experiment_types t "
+                    "JOIN experiment_flakiness f ON f.experiment_type_id = t.id "
+                    "WHERE f.gating IS TRUE ORDER BY t.name")
+        gating = [r[0] for r in cur.fetchall()]
+        epoch_id = ensure_epoch(cur, gating, "epoch 1 - initial scorer (Phase 4)")
+
         cur.execute(
             """INSERT INTO experiment_executions
                    (experiment, experiment_type_id, hypothesis_id, verdict,
-                    verdict_reason, git_sha, fault_injected_at, finished_at)
-               VALUES (%s, %s, %s, %s, %s, %s, to_timestamp(%s), to_timestamp(%s))
+                    verdict_reason, git_sha, fault_injected_at, finished_at,
+                    scoring_epoch_id, score, weights_denominator)
+               VALUES (%s, %s, %s, %s, %s, %s, to_timestamp(%s), to_timestamp(%s),
+                       %s, %s, %s)
                RETURNING id""",
             (spec["name"], type_id, hypothesis_id, verdict, reason, git_sha,
-             fault_injected_at, finished_at))
+             fault_injected_at, finished_at, epoch_id,
+             score.score if score else None,
+             score.weights_denominator if score else None))
         execution_id = cur.fetchone()[0]
 
         cur.execute(
@@ -90,6 +123,16 @@ def persist_run(*, spec: dict, verdict: str | None, reason: str | None,
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
                 (execution_id, hypothesis_id, o.name, o.outcome,
                  o.worst_value, o.threshold, o.breached_for_s, json.dumps(o.evidence)))
+
+        for c in (check_list or []):
+            cur.execute(
+                """INSERT INTO validation_checks
+                       (execution_id, check_type, check_name, applicable, outcome,
+                        score, expected_value, actual_value, message, details)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (execution_id, c.check_type, c.check_name, c.applicable, c.outcome,
+                 c.score, c.expected_value, c.actual_value, c.message,
+                 json.dumps(c.details)))
 
         rows = [(execution_id, s.sampled_at, src, m, v)
                 for s in samples.samples

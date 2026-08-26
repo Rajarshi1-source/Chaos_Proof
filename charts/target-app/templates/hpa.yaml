@@ -1,0 +1,44 @@
+{{- if .Values.hpa.enabled }}
+# HPA on payment-service, for the CPU-spike experiment (#5).
+#
+# The scaling paradox this exists to expose: pod-cpu-hog burns CPU INSIDE one
+# container. HPA measures utilisation against REQUESTS (200m), and a container
+# pinned at its 500m limit reads ~250% — so it scales out. But the new replicas
+# are healthy while the hogged pod stays hogged: scaling does not relieve the
+# injected load. The experiment therefore asserts that the AGGREGATE SLI holds,
+# never that "the spike goes away".
+#
+# The HPA name matches the deployment name so the framework's
+# kube_horizontalpodautoscaler_* query can scope by target.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Values.hpa.target }}
+  namespace: {{ .Values.namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Values.hpa.target }}
+  minReplicas: {{ .Values.hpa.minReplicas }}
+  maxReplicas: {{ .Values.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.hpa.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleUp:
+      # No stabilisation window: a 60s fault must be able to provoke a reaction
+      # within the experiment's own recovery window, or the invariant would be
+      # measuring the HPA's patience rather than the system's behaviour.
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 60
+{{- end }}

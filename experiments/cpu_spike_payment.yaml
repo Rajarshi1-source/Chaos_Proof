@@ -1,0 +1,89 @@
+# Experiment 5 — CPU spike. CORRECTED ASSERTION: the scaling paradox.
+#
+# `pod-cpu-hog` burns CPU INSIDE the target container. So:
+#   - HPA sees high utilisation and adds replicas — each new replica is healthy
+#     while the hogged pod stays hogged. Scaling does NOT relieve the injected
+#     load, so "the spike goes away" is never a legitimate assertion.
+#   - With CPU limits set the hog is throttled, so utilisation may barely move.
+#     Here limits=500m against requests=200m, and HPA measures against REQUESTS,
+#     so a hog pinned at its 500m limit reads as ~250% — well past a 70% target.
+#     That is why an HPA reaction is expected in THIS configuration and would not
+#     be in one where limits == requests.
+#
+# What is asserted: throttle RATIO rises and then returns, latency degrades within
+# budget, HPA reacts, and the AGGREGATE client SLI holds throughout.
+experiment:
+  name: cpu_spike_payment
+  litmus_fault: pod-cpu-hog
+  target: { namespace: target-app, app: payment-service }
+  fault_duration_s: 60
+  recovery_window_s: 180
+  chaos_fixture: cpu-burner
+  requires_hpa: true              # pre-flight reads horizontalpodautoscalers; without
+                                  # one, this hypothesis is not the right claim -> SKIPPED
+  params:
+    CPU_CORES: "1"
+    PODS_AFFECTED_PERC: "50"      # hog ONE replica; the aggregate must still hold
+
+  load_profile: profiles/steady_120rps.js
+  min_rps_floor: 90
+
+  expected_alerts: [TargetCpuThrottlingHigh]
+  pattern_metric: null            # a CPU hog exercises no Resilience4j pattern
+  pattern_name: null
+
+  hypothesis:
+    version: 1
+    description: >
+      When one payment-service replica is CPU-hogged, its CFS throttle ratio rises
+      above the 5% ceiling and the HPA scales the deployment out (utilisation is
+      measured against the 200m request, so a container pinned at its 500m limit
+      reads ~250% against a 70% target). The AGGREGATE client SLI holds >=99%
+      because the Service spreads traffic across healthy replicas, and client P99
+      stays within the 2000ms chaos budget. Throttling returns below the ceiling
+      once the fault ends — because the fault ended, NOT because autoscaling
+      relieved it.
+
+    invariants:
+      - name: aggregate_availability_holds
+        source: k6
+        metric: client_availability
+        comparator: ">="
+        threshold: 0.990
+        tolerance_s: 15           # THE assertion: one hogged pod must not move the
+                                  # aggregate, because the Service has healthy peers
+
+      - name: client_p99_within_chaos_budget
+        source: k6
+        metric: client_p99_ms
+        comparator: "<="
+        threshold: 2000
+        tolerance_s: 15
+
+      - name: throttle_ratio_recovers
+        source: prometheus
+        metric: throttle_ratio
+        comparator: "<="
+        threshold: 0.05
+        recover_within_s: 150     # RECOVERY: expected to breach under the hog and
+                                  # return after it. "Never breached" is recorded as
+                                  # evidence - it means the hog did not bite.
+
+      - name: hpa_scales_up
+        source: prometheus
+        metric: hpa_replicas
+        comparator: ">="
+        threshold: 3
+        recover_within_s: 150     # RECOVERY: starts at 2 (breaching), must reach 3
+
+    abort_conditions:
+      - name: availability_collapse
+        source: k6
+        metric: client_availability
+        comparator: "<"
+        threshold: 0.80
+      - name: unrelated_namespace_impact
+        source: prometheus
+        metric: other_namespace_5xx_rate
+        comparator: ">"
+        threshold: 0.5

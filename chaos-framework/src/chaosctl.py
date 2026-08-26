@@ -16,6 +16,7 @@ import sys
 import yaml
 
 from .orchestrator import runner
+from .orchestrator.runner import PreflightSkip
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXPERIMENTS_DIR = REPO_ROOT / "experiments"
@@ -52,6 +53,7 @@ def cmd_run(args) -> int:
     spec = yaml.safe_load(spec_path.read_text())["experiment"]
     prom_url = os.environ.get("PROM_URL", "http://localhost:19090")
     testrun = os.environ.get("TESTRUN", "steady-120rps")
+    am_url = os.environ.get("ALERTMANAGER_URL", "http://localhost:19093")
 
     print(f"experiment : {spec['name']}   fault {spec['litmus_fault']} "
           f"{spec['fault_duration_s']}s + recovery {spec['recovery_window_s']}s")
@@ -72,8 +74,16 @@ def cmd_run(args) -> int:
         print(f"  t+{sample.sampled_at - t0:5.1f}s  rps={_f(rps, '.0f')}  "
               f"avail={_f(avail, '.4f')}  payment_replicas={_f(replicas, '.0f')}")
 
-    engine, verdict, execution_id, facts, chaos, samples = runner.run(
-        spec_path, prom_url, testrun, on_tick=on_tick)
+    try:
+        (engine, verdict, execution_id, facts, chaos,
+         samples, check_list, score) = runner.run(
+            spec_path, prom_url, testrun, am_url, on_tick=on_tick)
+    except PreflightSkip as e:
+        # SKIPPED is a first-class recorded outcome, never a silent no-op.
+        print("refused")
+        print()
+        print(f"VERDICT    : SKIPPED — {e}")
+        return 3
 
     print()
     print(f"engine     : {engine}   litmus verdict={chaos.get('verdict')}")
@@ -91,6 +101,20 @@ def cmd_run(args) -> int:
             print(f"{o.name:32} {kind:16} {o.outcome.upper():10} "
                   f"{worst:>10} {o.threshold:>10.4g} {o.breached_for_s:>8.1f}s")
         print()
+
+    print(f"{'CHECK':24} {'APPLICABLE':11} {'OUTCOME':9} {'SCORE':>6}  DETAIL")
+    for c in check_list:
+        s = " n/a" if c.score is None else f"{c.score:.2f}"
+        print(f"{c.check_type:24} {str(c.applicable):11} {c.outcome.upper():9} "
+              f"{s:>6}  {c.actual_value or c.message}")
+    print()
+    if score.score is None:
+        print(f"SCORE      : none — {score.reason}")
+    else:
+        excl = f", excluded {score.excluded}" if score.excluded else ""
+        print(f"SCORE      : {score.score:.4f}  ({score.status}, "
+              f"weights denominator {score.weights_denominator}{excl})")
+    print()
 
     banner = VERDICT_BANNER.get(verdict.verdict, verdict.verdict.upper())
     print(f"VERDICT    : {banner}" + (f" — {verdict.reason}" if verdict.reason else ""))
