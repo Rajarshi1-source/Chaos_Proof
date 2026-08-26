@@ -11,3 +11,6 @@ node_modules/
 # Local scratch
 *.log
 .DS_Store
+
+# Evidence-store dumps (make evidence-backup)
+backups/

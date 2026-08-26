@@ -9,9 +9,18 @@ LITMUS_CHART_VER := 3.31.0
 K6OP_CHART_VER   := 4.6.0
 METRICS_SERVER_VER := v0.8.0   # HPA needs it; kind needs --kubelet-insecure-tls
 CLUSTER          := chaosproof
+EVIDENCE_CONTAINER := chaosproof-evidence
+EVIDENCE_PORT    := 5433
+POSTGRES_IMAGE   := postgres:18.6-alpine
 SERVICES         := order-api payment-service inventory-service
 
-.PHONY: kind-up target-app load experiment dashboard kind-down
+.PHONY: bootstrap kind-up evidence-up evidence-backup target-app load load-stop experiment score dashboard kind-down
+
+bootstrap:      ## Everything from nothing: cluster + platform + evidence store + app + load
+	$(MAKE) kind-up
+	$(MAKE) evidence-up
+	$(MAKE) target-app
+	$(MAKE) load
 
 kind-up:        ## kind 1.36 + kube-prometheus-stack (5s scrape on target) + Litmus operator
 	kind create cluster --name $(CLUSTER) --image $(KIND_NODE) --wait 180s
@@ -32,6 +41,26 @@ kind-up:        ## kind 1.36 + kube-prometheus-stack (5s scrape on target) + Lit
 	kubectl get namespace target-app >/dev/null 2>&1 || kubectl create namespace target-app
 	for f in litmus-experiments/*-fault-3.31.yaml; do kubectl apply -f $$f -n target-app; done
 	kubectl apply -f litmus-experiments/pod-delete-rbac.yaml
+
+# Evidence store: postgres 18.6 + migrations, on a NAMED VOLUME so it survives a
+# container recreate. It was created ad-hoc with a bare `docker run` until a Docker
+# Desktop factory reset took executions 1-4 with it — a live demonstration of the
+# plan's own §24: losing a night's schedule costs a night, losing the evidence store
+# costs the entire resilience history and every retro-scoring capability with it.
+evidence-up:    ## Evidence store: postgres 18.6 + migrations (idempotent)
+	-docker rm -f $(EVIDENCE_CONTAINER)
+	docker run -d --name $(EVIDENCE_CONTAINER) -p $(EVIDENCE_PORT):5432 -e POSTGRES_DB=chaosproof -e POSTGRES_USER=chaosproof -e POSTGRES_PASSWORD=chaosproof -v chaosproof-evidence-data:/var/lib/postgresql $(POSTGRES_IMAGE)
+	until docker exec $(EVIDENCE_CONTAINER) pg_isready -U chaosproof >/dev/null 2>&1; do sleep 2; done
+	for m in migrations/*.sql; do echo "applying $$m"; docker exec -i $(EVIDENCE_CONTAINER) psql -q -U chaosproof -d chaosproof -v ON_ERROR_STOP=1 < $$m; done
+	@echo "evidence store ready on localhost:$(EVIDENCE_PORT)"
+
+evidence-backup: ## pg_dump the evidence store. Losing it costs the whole resilience history.
+	mkdir -p backups
+	docker exec $(EVIDENCE_CONTAINER) pg_dump -U chaosproof -d chaosproof > backups/chaosproof-$$(date +%Y%m%d%H%M%S).sql
+	@echo "backed up to backups/"
+
+score:          ## GATE 4 - hermetic re-scoring of the SS4 worked example
+	python -m evals.scoring_worked_example
 
 target-app:     ## Build + load the three Spring Boot 4 service images, deploy the chart
 	for s in $(SERVICES); do \
