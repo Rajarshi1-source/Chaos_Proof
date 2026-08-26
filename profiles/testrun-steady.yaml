@@ -22,6 +22,8 @@ spec:
     env:
       - name: TARGET_URL
         value: http://order-api.target-app:8080
+      - name: LOAD_DURATION
+        value: "45m"          # covers a full six-experiment suite plus warmup
       - name: K6_PROMETHEUS_RW_SERVER_URL
         value: http://kps-kube-prometheus-stack-prometheus.monitoring:9090/api/v1/write
       - name: K6_PROMETHEUS_RW_TREND_STATS

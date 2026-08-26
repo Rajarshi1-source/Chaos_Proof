@@ -40,6 +40,22 @@ services:
   - name: payment-service
     port: 8081
     replicas: 2
+    # Right-sized after measurement, not guesswork: at 120 rps each replica draws
+    # ~340m. Against the original 200m request that is 170% — above the HPA's 70%
+    # scale-up target — so the deployment sat permanently at maxReplicas and the
+    # CPU-spike experiment could not observe a reaction from a system that had
+    # already reacted. An HPA whose target is exceeded at steady state is
+    # misconfigured; 600m puts steady state near 57% and leaves the autoscaler
+    # somewhere to go.
+    resources:
+      limits:
+        ephemeral-storage: 1Gi
+        memory: 512Mi
+        cpu: 1200m
+      requests:
+        ephemeral-storage: 512Mi
+        memory: 256Mi
+        cpu: 600m
     env: []
   - name: inventory-service
     port: 8082

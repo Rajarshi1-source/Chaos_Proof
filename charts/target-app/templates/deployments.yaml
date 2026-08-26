@@ -7,7 +7,13 @@ metadata:
   labels:
     app: {{ .name }}
 spec:
+  {{- if not (and $.Values.hpa.enabled (eq $.Values.hpa.target .name)) }}
+  # Omitted when an HPA owns this deployment: the autoscaler is authoritative for
+  # .spec.replicas, and Helm 4 defaults to SERVER-SIDE APPLY, so a chart that also
+  # declares replicas gets an explicit field-ownership conflict with
+  # kube-controller-manager rather than silently fighting it.
   replicas: {{ .replicas }}
+  {{- end }}
   selector:
     matchLabels:
       app: {{ .name }}

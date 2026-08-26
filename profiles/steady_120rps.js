@@ -9,7 +9,11 @@ export const options = {
     steady: {
       executor: 'constant-arrival-rate',   // OPEN model. Never constant-vus.
       rate: 120, timeUnit: '1s',
-      duration: '10m',
+      // Duration is an OPERATIONAL parameter, not a load characteristic: the rate
+      // and the open model are what the measurement depends on. A six-experiment
+      // suite outlasts 10m, and a generator that expires mid-suite would return
+      // INVALID for the later runs - correct behaviour, wrong cause.
+      duration: __ENV.LOAD_DURATION || '10m',
       // 400 preAllocated: 120rps x 3s worst-case timeout = 360 VUs in flight.
       // 200 proved insufficient (verified 23 Aug 2026): a pod-kill's latency spike
       // pushed VU demand past 200 and k6 dropped 72 iterations in-window -> the

@@ -73,8 +73,12 @@ experiment:
         source: prometheus
         metric: hpa_replicas
         comparator: ">="
-        threshold: 3
-        recover_within_s: 150     # RECOVERY: starts at 2 (breaching), must reach 3
+        threshold: 4
+        recover_within_s: 150     # RECOVERY: baseline measured at 3 of max 4 under
+                                  # steady 120rps, so >=3 would hold trivially at t=0.
+                                  # Calibrated to max: the hog must drive it there.
+                                  # Threshold set against the BASELINE, before any run -
+                                  # never against a result.
 
     abort_conditions:
       - name: availability_collapse
