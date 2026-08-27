@@ -1,0 +1,107 @@
+# ChaosProof safety policy. Evaluated with cel-python.
+#
+# Resolution order: first DENY wins, then REQUIRE_OVERRIDE, else ALLOW.
+#
+# These rules are DATA, not code, so adding a guardrail is a pull request a
+# reviewer can argue with rather than a diff buried in a Python file. Every rule
+# carries a `message` used verbatim in the verdict reason, Slack, and the
+# evidence bundle — a denial the operator cannot read is not a guardrail.
+#
+# evals/policy_eval.py requires every rule to carry a must_allow and a must_deny
+# case and gates CI on them. The policy file is code, so it gets tested.
+#
+# NEVER widen a rule to make a run succeed. A denial is a result.
+version: 1
+
+rules:
+  # ORDER MATTERS. This rule is FIRST because deny-outside-allowed-namespaces
+  # would otherwise shadow it: "chaosproof" is not in the allowed set, so the
+  # generic rule fired and the self-exclusion could never be attributed. A
+  # shadowed guardrail is a latent bug — the day someone adds chaosproof to the
+  # allowed namespaces, the self-protection would silently not exist.
+  # Caught by evals/policy_eval.py, which requires each rule to be the one that
+  # fires on its own must_deny case.
+  - id: deny-chaosproof-self
+    effect: deny
+    expr: 'experiment.target_namespace == "chaosproof"'
+    message: >-
+      ChaosProof refuses to inject chaos into ChaosProof: killing the pod that
+      holds the experiment's own state loses the experiment being run, and the
+      resulting half-written execution row is worse than no data
+    must_deny: { experiment: { target_namespace: "chaosproof" } }
+    must_allow: { experiment: { target_namespace: "target-app" } }
+
+  - id: deny-outside-allowed-namespaces
+    effect: deny
+    expr: '!(experiment.target_namespace in ["target-app", "chaos-staging"])'
+    message: >-
+      target namespace is outside the allowed set [target-app, chaos-staging]
+    must_deny: { experiment: { target_namespace: "kube-system" } }
+    must_allow: { experiment: { target_namespace: "target-app" } }
+
+  - id: deny-stateful-targets
+    effect: deny
+    expr: >-
+      experiment.target_kind == "StatefulSet" ||
+      experiment.target_name.startsWith("postgres")
+    message: >-
+      stateful targets are out of scope: this framework's blast-radius model
+      assumes a replaceable replica, and it cannot reason about data loss
+    must_deny: { experiment: { target_kind: "StatefulSet", target_name: "postgres" } }
+    must_allow: { experiment: { target_kind: "Deployment", target_name: "payment-service" } }
+
+  - id: deny-single-replica
+    effect: deny
+    expr: 'target.replicas < 2'
+    message: >-
+      target has fewer than 2 replicas, so any pod-level fault is a full outage
+      rather than a resilience test
+    must_deny: { target: { replicas: 1 } }
+    must_allow: { target: { replicas: 2 } }
+
+  - id: deny-counterfactual-outside-staging
+    effect: deny
+    expr: >-
+      experiment.mode == "counterfactual" &&
+      experiment.target_namespace != "chaos-staging"
+    message: >-
+      counterfactual runs deliberately disable a resilience pattern and are
+      restricted to chaos-staging; the "without" arm is designed to fail harder
+    must_deny: { experiment: { mode: "counterfactual", target_namespace: "target-app" } }
+    must_allow: { experiment: { mode: "counterfactual", target_namespace: "chaos-staging" } }
+
+  - id: deny-budget-gate-closed
+    effect: deny
+    expr: 'budget.gate_state != "open"'
+    message: >-
+      the error-budget gate is not open; when the reliability allowance is spent
+      the right engineering decision is to fix reliability, not inject more failure
+    must_deny: { budget: { gate_state: "closed" } }
+    must_allow: { budget: { gate_state: "open" } }
+
+  - id: deny-below-validity-floor
+    effect: deny
+    expr: 'load.current_rps < experiment.min_rps_floor'
+    message: >-
+      offered load is below the SLI validity floor; without traffic the result
+      would be INVALID, and injecting a fault to produce an unmeasurable run
+      spends blast radius for no evidence
+    must_deny: { load: { current_rps: 10.0 }, experiment: { min_rps_floor: 90.0 } }
+    must_allow: { load: { current_rps: 120.0 }, experiment: { min_rps_floor: 90.0 } }
+
+  - id: require-override-large-radius
+    effect: require_override
+    expr: 'blast.score > 60'
+    message: >-
+      blast-radius score exceeds 60; proceed only with an explicit override
+    must_deny: { blast: { score: 95 } }
+    must_allow: { blast: { score: 34 } }
+
+  - id: require-override-budget-heavy
+    effect: require_override
+    expr: 'blast.error_budget_burn_pct > 2.0'
+    message: >-
+      this experiment is projected to burn more than 2% of the remaining error
+      budget; that needs a human decision, not a scheduler's
+    must_deny: { blast: { error_budget_burn_pct: 5.0 } }
+    must_allow: { blast: { error_budget_burn_pct: 0.014 } }

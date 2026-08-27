@@ -40,8 +40,14 @@ SERVER = {
         'sum(kube_deployment_status_replicas_available'
         '{namespace="target-app",deployment="payment-service"})'
     ),
+    # Blast-radius containment: 5xx OUTSIDE THE EXPERIMENT'S OWN NAMESPACE.
+    # This was hardcoded to namespace!="target-app", which made a chaos-staging
+    # experiment count its own EXPECTED failures as blast-radius escape and
+    # abort itself on the first tick. A containment check must be relative to
+    # the blast radius it is containing, not to whichever namespace was typed
+    # in first.
     "other_namespace_5xx_rate": (
-        f'sum(rate(http_server_requests_seconds_count{{status=~"5..",namespace!="target-app"}}[{W}]))'
+        f'sum(rate(http_server_requests_seconds_count{{status=~"5..",namespace!="$TARGET_NS"}}[{W}]))'
         f' or vector(0)'
     ),
     # Circuit-breaker observability (experiments 2-3 assert on the named instance).
@@ -66,22 +72,22 @@ TARGET_SCOPED = {
     # Replicas the target deployment currently has Available.
     "target_replicas_available": (
         'sum(kube_deployment_status_replicas_available'
-        '{namespace="target-app",deployment="$TARGET"}) or vector(0)'
+        '{namespace="$TARGET_NS",deployment="$TARGET"}) or vector(0)'
     ),
     # Container restarts — the container-kill assertion, and a completeness signal.
     "target_restarts": (
         'sum(kube_pod_container_status_restarts_total'
-        '{namespace="target-app",pod=~"$TARGET-.*"}) or vector(0)'
+        '{namespace="$TARGET_NS",pod=~"$TARGET-.*"}) or vector(0)'
     ),
     # CPU throttle RATIO — dimensionless. NEVER raw throttled-period counters:
     # they scale with replica count and window length, which makes the check
     # meaningless (measurement-integrity: looks-right-but-wrong table).
     "throttle_ratio": (
         f'(sum(rate(container_cpu_cfs_throttled_periods_total'
-        f'{{namespace="target-app",pod=~"$TARGET-.*",container="$TARGET"}}[{W}]))'
+        f'{{namespace="$TARGET_NS",pod=~"$TARGET-.*",container="$TARGET"}}[{W}]))'
         f' / '
         f'clamp_min(sum(rate(container_cpu_cfs_periods_total'
-        f'{{namespace="target-app",pod=~"$TARGET-.*",container="$TARGET"}}[{W}])), 0.001))'
+        f'{{namespace="$TARGET_NS",pod=~"$TARGET-.*",container="$TARGET"}}[{W}])), 0.001))'
         f' or vector(0)'
     ),
     # Pods currently marked Evicted — the CORRECT disk-fill assertion.
@@ -90,13 +96,13 @@ TARGET_SCOPED = {
     # into existence is unreliable; the gauge form is deterministic.
     "evicted_pods": (
         'sum(kube_pod_status_reason'
-        '{namespace="target-app",reason="Evicted"}) or vector(0)'
+        '{namespace="$TARGET_NS",reason="Evicted"}) or vector(0)'
     ),
     # HPA current replicas — the CPU-spike experiment reads this to see the
     # autoscaler react. Absent unless an HPA owns the workload.
     "hpa_replicas": (
         'sum(kube_horizontalpodautoscaler_status_current_replicas'
-        '{namespace="target-app",horizontalpodautoscaler="$TARGET"}) or vector(0)'
+        '{namespace="$TARGET_NS",horizontalpodautoscaler="$TARGET"}) or vector(0)'
     ),
 }
 
@@ -105,12 +111,14 @@ def client_queries(testrun: str) -> dict[str, str]:
     return {k: v.replace("$TESTRUN", testrun) for k, v in CLIENT.items()}
 
 
-def server_queries(target: str | None = None) -> dict[str, str]:
+def server_queries(target: str | None = None,
+                   target_ns: str = "target-app") -> dict[str, str]:
     """Shared server queries plus, when a target deployment is given, the
     target-scoped ones. `payment_replicas_available` is retained verbatim so
     experiments 1-3 keep their hypothesis version — renaming a metric an
     invariant reads would silently return empty, which reads as a pass."""
-    out = dict(SERVER)
+    out = {k: v.replace("$TARGET_NS", target_ns) for k, v in SERVER.items()}
     if target:
-        out.update({k: v.replace("$TARGET", target) for k, v in TARGET_SCOPED.items()})
+        out.update({k: v.replace("$TARGET_NS", target_ns).replace("$TARGET", target)
+                    for k, v in TARGET_SCOPED.items()})
     return out

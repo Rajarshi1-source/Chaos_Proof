@@ -41,8 +41,12 @@ resilience4j:
       cache:                                    # NEVER rename: experiments assert on this name
         registerHealthIndicator: true
         slidingWindowSize: 10
+        minimumNumberOfCalls: 5      # same defect as order-api: the 100 default made
+                                     # a 10-call window unable to ever compute a rate
         failureRateThreshold: 50
         waitDurationInOpenState: 10s
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
   retry:
     instances:
       database:                                 # NEVER rename

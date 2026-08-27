@@ -1,0 +1,57 @@
+# chaos-staging — the ONLY environment where resilience patterns may be
+# deliberately disabled (§26.1). The policy rule
+# `deny-counterfactual-outside-staging` enforces that, so a counterfactual run
+# has nowhere else to go.
+#
+# Deliberately trimmed to order-api + payment-service: the partition target and
+# the service that holds the circuit breaker and the fallback. A third JVM would
+# push the node past its memory limits, and a staging environment that OOM-kills
+# is a confound rather than an environment.
+#
+#   helm upgrade --install target-app-staging charts/target-app \
+#     --namespace chaos-staging -f charts/target-app/values-staging.yaml
+namespace: chaos-staging
+imageTag: dev
+
+# The flag plane's controller is registered ONLY under this profile — outside it
+# the route does not exist, rather than existing and refusing.
+springProfile: chaos-staging
+fixturesEnabled: "true"
+
+hpa:
+  enabled: false          # the HPA belongs to the CPU-spike experiment in target-app
+
+resources:
+  limits:
+    ephemeral-storage: 1Gi
+    # 384Mi OOM-killed a Boot 4 JVM on its first POST; 512Mi still OOM-killed it
+    # under sustained load. MaxRAMPercentage=75 puts the heap at 576Mi here, and
+    # the remainder covers metaspace, code cache and virtual-thread stacks.
+    # Sized from observed kills, not from a round number that looked plausible.
+    memory: 768Mi
+    cpu: 800m
+  requests:
+    ephemeral-storage: 256Mi
+    memory: 384Mi
+    cpu: 200m
+
+services:
+  - name: order-api
+    port: 8080
+    replicas: 2           # >= 2 or `deny-single-replica` refuses every experiment
+    env:
+      - name: PAYMENT_SERVICE_URL
+        value: http://payment-service:8081
+      # Cross-namespace to the existing healthy inventory. Staging only needs its
+      # own order-api and payment-service; borrowing a read-only dependency is
+      # cheaper than a third JVM and keeps the inventory path from confounding
+      # the measurement.
+      - name: INVENTORY_SERVICE_URL
+        value: http://inventory-service.target-app:8082
+  - name: payment-service
+    port: 8081
+    replicas: 2
+    env: []
+
+postgres:
+  image: postgres:18.6-alpine

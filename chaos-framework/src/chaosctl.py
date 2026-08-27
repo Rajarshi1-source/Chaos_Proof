@@ -25,7 +25,12 @@ VERDICT_BANNER = {
     "held": "HYPOTHESIS_HELD",
     "falsified": "HYPOTHESIS_FALSIFIED",
     "invalid": "INVALID",
+    "aborted": "ABORTED",
+    "skipped": "SKIPPED",
+    "denied": "DENIED",
 }
+EXIT_CODES = {"held": 0, "falsified": 1, "invalid": 2,
+              "aborted": 3, "skipped": 4, "denied": 5}
 
 
 def _resolve(name: str) -> pathlib.Path:
@@ -75,17 +80,27 @@ def cmd_run(args) -> int:
               f"avail={_f(avail, '.4f')}  payment_replicas={_f(replicas, '.0f')}")
 
     try:
-        (engine, verdict, execution_id, facts, chaos,
-         samples, check_list, score) = runner.run(
-            spec_path, prom_url, testrun, am_url, on_tick=on_tick)
+        r = runner.run(spec_path, prom_url, testrun, am_url, on_tick=on_tick,
+                       require_override=getattr(args, "override", False))
     except PreflightSkip as e:
-        # SKIPPED is a first-class recorded outcome, never a silent no-op.
-        print("refused")
+        # SKIPPED/DENIED are first-class recorded outcomes, never silent no-ops.
+        print("REFUSED")
+        execution_id = runner.record_refusal(spec, e.verdict, e.reason, e.evidence)
         print()
-        print(f"VERDICT    : SKIPPED — {e}")
-        return 3
+        print(f"execution  : #{execution_id}  (refusal recorded, nothing injected)")
+        print(f"VERDICT    : {VERDICT_BANNER.get(e.verdict, e.verdict.upper())} — {e.reason}")
+        return EXIT_CODES.get(e.verdict, 5)
+
+    engine, verdict, execution_id = r["engine"], r["verdict"], r["execution_id"]
+    facts, chaos, samples = r["facts"], r["chaos"], r["samples"]
+    check_list, score = r["checks"], r["score"]
 
     print()
+    radius = r["preflight"].radius
+    if radius:
+        print(f"blast      : score {radius.score()}  {radius.affected_pods} pod(s)  "
+              f"{radius.requests_at_risk_per_min:.0f} req/min at risk  "
+              f"budget burn {radius.error_budget_burn_pct:.3f}%")
     print(f"engine     : {engine}   litmus verdict={chaos.get('verdict')}")
     print(f"load       : achieved {facts.achieved_rps:.1f} rps   "
           f"dropped {facts.dropped_iterations:.0f}   coverage {facts.coverage:.0%}")
@@ -116,9 +131,19 @@ def cmd_run(args) -> int:
               f"weights denominator {score.weights_denominator}{excl})")
     print()
 
+    if r["aborted_by"]:
+        w = r["watchdog"]
+        print(f"ABORT      : {r['aborted_by']} — {w.reason}")
+    cl = r["cleanup"]
+    steps = "  ".join(f"{s.name}={'ok' if s.ok else 'FAILED'}" for s in cl.steps)
+    print(f"cleanup    : {steps}")
+    if cl.escalated:
+        print(f"             ESCALATED — {cl.escalation_reason}")
+    print()
+
     banner = VERDICT_BANNER.get(verdict.verdict, verdict.verdict.upper())
     print(f"VERDICT    : {banner}" + (f" — {verdict.reason}" if verdict.reason else ""))
-    return {"held": 0, "falsified": 1, "invalid": 2}.get(verdict.verdict, 3)
+    return EXIT_CODES.get(verdict.verdict, 6)
 
 
 def _f(v, spec) -> str:
@@ -130,6 +155,8 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     p_run = sub.add_parser("run", help="run one experiment, print per-invariant verdicts")
     p_run.add_argument("experiment")
+    p_run.add_argument("--override", action="store_true",
+                       help="satisfy a require_override policy rule (recorded)")
     p_run.set_defaults(func=cmd_run)
     p_list = sub.add_parser("list", help="list registered experiments")
     p_list.set_defaults(func=cmd_list)

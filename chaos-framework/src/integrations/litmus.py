@@ -32,6 +32,54 @@ spec:
         components:
           env:
 {env_block}
+{probe_block}"""
+
+
+# In-band abort path. mode: Continuous + stopOnFailure: true is what turns a
+# probe into an ABORT — mode: EOT only tells you afterwards, which is a
+# validator, not a guard.
+#
+# Both probes are promProbe, which is why Litmus >= 3.28.0 is load-bearing here:
+# that release fixed a stale-config leak across MULTIPLE PROBES OF THE SAME TYPE.
+# On an older build the second probe could silently inherit the first's query.
+#
+# The queries read k6's remote-written series, not server-side metrics: a guard
+# reading server-side counters cannot see the failures that never reached a server.
+PROBE_TEMPLATE = """        probe:
+          - name: client-availability-guard
+            type: promProbe
+            mode: Continuous
+            runProperties:
+              probeTimeout: 5s
+              interval: 5s
+              retry: 1
+              stopOnFailure: true
+            promProbe/inputs:
+              endpoint: {prom_endpoint}
+              query: 1 - avg(k6_http_req_failed_rate{{testrun="{testrun}"}})
+              # NO `type:` here. Verified against the Litmus 3.31.0 CRD:
+              # promProbe/inputs.comparator accepts only criteria and value,
+              # while cmdProbe REQUIRES type. Including it fails strict decoding
+              # with 'unknown field ... comparator.type' at apply time.
+              comparator:
+                criteria: ">="
+                value: "{availability_floor}"
+          - name: blast-radius-containment
+            type: promProbe
+            mode: Continuous
+            runProperties:
+              probeTimeout: 5s
+              interval: 10s
+              retry: 0
+              stopOnFailure: true
+            promProbe/inputs:
+              endpoint: {prom_endpoint}
+              query: >-
+                sum(rate(http_server_requests_seconds_count{{status=~"5..",namespace!="{target_ns}"}}[30s]))
+                or vector(0)
+              comparator:
+                criteria: "<="
+                value: "{containment_ceiling}"
 """
 
 # Per-fault default env. Experiment YAML `params` override these.
@@ -70,7 +118,8 @@ def _kubectl(*args: str, input_text: str | None = None) -> subprocess.CompletedP
 class LitmusClient:
 
     def apply_fault(self, fault: str, namespace: str, app: str,
-                    duration_s: int, params: dict | None = None) -> str:
+                    duration_s: int, params: dict | None = None,
+                    probes: str = "") -> str:
         env = {"TOTAL_CHAOS_DURATION": str(duration_s),
                "CHAOS_INTERVAL": str(duration_s)}          # single event by default
         env.update(FAULT_ENV_DEFAULTS.get(fault, {}))
@@ -81,7 +130,8 @@ class LitmusClient:
             for k, v in env.items())
         name = f"{fault}-{int(time.time())}"
         manifest = ENGINE_TEMPLATE.format(
-            name=name, namespace=namespace, app=app, fault=fault, env_block=env_block)
+            name=name, namespace=namespace, app=app, fault=fault,
+            env_block=env_block, probe_block=probes)
         proc = _kubectl("apply", "-f", "-", input_text=manifest)
         if proc.returncode != 0:
             raise RuntimeError(f"chaosengine apply failed: {proc.stderr}")
@@ -102,5 +152,39 @@ class LitmusClient:
         return {"verdict": exp.get("verdict"), "phase": exp.get("phase"),
                 "failStep": exp.get("failStep")}
 
+    def probes_for(self, spec: dict, testrun: str, prom_endpoint: str,
+                   target_ns: str = "target-app") -> str:
+        """Render the abort probes from the SAME abort_conditions the watchdog
+        reads, so the in-band and out-of-band paths cannot drift apart."""
+        hyp = spec.get("hypothesis", {})
+        conditions = spec.get("abort_conditions") or hyp.get("abort_conditions") or []
+        # abort_conditions state the TRIGGER ("availability < 0.80"); a Litmus
+        # probe states the HEALTHY criteria and aborts when it fails
+        # ("availability >= 0.80"). Same number, inverted comparator — read the
+        # threshold from the shared declaration so the two paths cannot drift.
+        availability_floor, containment_ceiling = 0.80, 0.5
+        for c in conditions:
+            if c.get("metric") == "client_availability":
+                availability_floor = float(c["threshold"])
+            elif c.get("metric") == "other_namespace_5xx_rate":
+                containment_ceiling = float(c["threshold"])
+        return PROBE_TEMPLATE.format(
+            prom_endpoint=prom_endpoint, testrun=testrun, target_ns=target_ns,
+            availability_floor=availability_floor,
+            containment_ceiling=containment_ceiling)
+
+    def stop_engine(self, namespace: str, name: str) -> None:
+        """Halt the fault mid-flight by flipping engineState to stop. This is the
+        abort itself: it ends the injection without waiting for the fault's own
+        schedule, which is the whole difference between a guard and a report."""
+        _kubectl("patch", "chaosengine", name, "-n", namespace, "--type", "merge",
+                 "-p", '{"spec":{"engineState":"stop"}}')
+
     def delete_engine(self, namespace: str, name: str) -> None:
-        _kubectl("delete", "chaosengine", name, "-n", namespace, "--ignore-not-found")
+        """--wait=false because Litmus clears the ChaosEngine's finalizer
+        asynchronously after the experiment stops. A blocking delete issued
+        immediately after an abort waits on that finalizer and times out, turning
+        a successful abort into a failed cleanup step. The chaos-cleanup CronJob
+        is the backstop for any engine whose finalizer never clears."""
+        _kubectl("delete", "chaosengine", name, "-n", namespace,
+                 "--ignore-not-found", "--wait=false")

@@ -32,6 +32,13 @@ spec:
           env:
             - name: CHAOS_FIXTURES_ENABLED
               value: {{ $.Values.fixturesEnabled | quote }}
+            {{- if $.Values.springProfile }}
+            # chaos-staging is the ONLY profile under which the flag plane's
+            # controller is registered at all — outside it the route does not
+            # exist, rather than existing and refusing.
+            - name: SPRING_PROFILES_ACTIVE
+              value: {{ $.Values.springProfile | quote }}
+            {{- end }}
             {{- with .env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

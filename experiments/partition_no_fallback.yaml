@@ -1,0 +1,81 @@
+# GATE 5 — the abort experiment.
+#
+# This is the network partition run with order-api's queue fallback DELIBERATELY
+# DISABLED. That matters: with the fallback on, a total partition still yields
+# 100% client availability (execution #3 proved it), so no abort threshold is
+# ever crossed and the safety plane would never be exercised for real. A guard
+# you have never seen fire is a claim, not a mechanism.
+#
+# mode: counterfactual makes the policy engine treat this as a deliberately
+# degraded configuration. The "without" arm is DESIGNED to fail harder, so it
+# gets a TIGHTER abort threshold than the standard arm: harder failure is
+# expected, unbounded failure is not.
+experiment:
+  name: partition_no_fallback
+  litmus_fault: pod-network-loss
+  # chaos-staging, because deny-counterfactual-outside-staging says so. The
+  # first run of this experiment was DENIED for pointing at target-app
+  # (execution #7) — the correct response to a denial is to move the experiment,
+  # never to widen the rule.
+  target: { namespace: chaos-staging, app: payment-service }
+  mode: counterfactual
+  fault_duration_s: 120           # long enough that the abort must cut it short
+  recovery_window_s: 120
+  chaos_fixture: hungry-worker
+  params:
+    NETWORK_PACKET_LOSS_PERCENTAGE: "100"
+
+  # Disabled for the duration; the cleanup saga restores it, with the
+  # chaos-cleanup CronJob as the out-of-band path.
+  # The pattern lives on the CONSUMER (order-api), not the fault target
+  # (payment-service): we partition the dependency and disable the caller's
+  # fallback. Two different services, one experiment.
+  disable_patterns: ["paymentService.fallback"]
+  flag_target: order-api
+
+  load_profile: profiles/steady_120rps.js
+  min_rps_floor: 90
+
+  expected_alerts: [TargetHighServerErrorRate]
+  pattern_metric: cb_payment_open
+  pattern_name: paymentService
+
+  hypothesis:
+    version: 1
+    description: >
+      With the queue fallback disabled, a full partition to payment-service reaches
+      the user: order-api's circuit breaker opens, but with nothing to fall back to
+      every checkout fails, so client availability collapses below the 0.85 abort
+      threshold. The safety plane must halt the fault BEFORE the declared 120s
+      elapse, and the cleanup saga must restore the flag and re-establish steady
+      state. The expected verdict is ABORTED — not held, not falsified: the fault
+      was cut short, so the hypothesis was never given its stated conditions.
+
+    invariants:
+      - name: client_availability_holds
+        source: k6
+        metric: client_availability
+        comparator: ">="
+        threshold: 0.95
+        tolerance_s: 20
+
+      - name: circuit_breaker_opens
+        source: prometheus
+        metric: cb_payment_open
+        comparator: ">="
+        threshold: 1
+        recover_within_s: 90
+
+    # TIGHTER than the standard arm's 0.80: the without-pattern arm is designed
+    # to fail harder, and the abort exists to bound how much harder.
+    abort_conditions:
+      - name: availability_collapse
+        source: k6
+        metric: client_availability
+        comparator: "<"
+        threshold: 0.85
+      - name: unrelated_namespace_impact
+        source: prometheus
+        metric: other_namespace_5xx_rate
+        comparator: ">"
+        threshold: 0.5

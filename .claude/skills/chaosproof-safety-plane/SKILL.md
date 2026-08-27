@@ -108,7 +108,11 @@ probe:
       query: |
         1 - (sum(rate(k6_http_reqs_failed_total{testrun="{{TESTRUN}}"}[30s]))
              / sum(rate(k6_http_reqs_total{testrun="{{TESTRUN}}"}[30s])))
-      comparator: { type: float, criteria: ">=", value: "0.80" }
+      # NO `type:` on a promProbe comparator. Verified against the Litmus 3.31.0
+      # CRD: promProbe/inputs.comparator accepts only {criteria, value};
+      # cmdProbe is the one that REQUIRES type. Including it here fails strict
+      # decoding at apply time with "unknown field ... comparator.type".
+      comparator: { criteria: ">=", value: "0.80" }
 
   - name: blast-radius-containment
     type: promProbe
@@ -118,7 +122,7 @@ probe:
       endpoint: http://prometheus-operated.monitoring:9090
       query: |
         sum(rate(http_server_requests_seconds_count{status=~"5..",namespace!="target-app"}[30s]))
-      comparator: { type: float, criteria: "<=", value: "0.5" }
+      comparator: { criteria: "<=", value: "0.5" }
 ```
 
 Three implementation notes that cost hours if missed:

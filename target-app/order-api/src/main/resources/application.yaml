@@ -34,8 +34,17 @@ resilience4j:
       paymentService:                           # NEVER rename: experiments assert on this name
         registerHealthIndicator: true
         slidingWindowSize: 10
+        # minimumNumberOfCalls MUST be <= slidingWindowSize. Resilience4j defaults it
+        # to 100 (DEFAULT_MINIMUM_NUMBER_OF_CALLS), so a COUNT_BASED window of 10
+        # could never reach the minimum, the failure rate was never computable, and
+        # this breaker was STRUCTURALLY INCAPABLE OF OPENING. The metrics published,
+        # the startup assertion passed, and the pattern still could not do its job -
+        # only injecting a real partition revealed it (execution #3, FALSIFIED).
+        minimumNumberOfCalls: 5
         failureRateThreshold: 50
         waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
   retry:
     instances:
       inventoryService:                         # NEVER rename

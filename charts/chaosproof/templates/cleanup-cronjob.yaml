@@ -1,0 +1,45 @@
+# The out-of-band cleanup path. NOT OPTIONAL.
+#
+# The saga inside the runner covers every exit path the runner reaches. This
+# covers the one it does not: the runner pod dying mid-fault. Without it, a
+# crashed runner leaves a ChaosEngine injected with nobody watching, and the
+# fault runs to its own schedule — or forever, if it has no schedule.
+#
+# "Never let cleanup depend only on the happy path" is the rule; this CronJob is
+# what makes that true rather than aspirational.
+#
+# Alert on chaosproof_orphaned_cleanups_total > 0: an orphan is not routine
+# housekeeping, it means a runner died and the framework noticed after the fact.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: chaos-cleanup
+  namespace: chaosproof
+  labels:
+    app.kubernetes.io/component: safety-plane
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: chaosproof-runner
+          containers:
+            - name: cleanup
+              image: chaosproof-framework:dev
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-m", "src.cleanup_sweeper"]
+              env:
+                - name: CHAOSPROOF_DB
+                  valueFrom:
+                    secretKeyRef:
+                      name: chaosproof-db
+                      key: dsn
+              resources:
+                limits: { memory: 256Mi, cpu: 200m }
+                requests: { memory: 128Mi, cpu: 50m }

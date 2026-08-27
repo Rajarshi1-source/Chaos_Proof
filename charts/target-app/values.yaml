@@ -16,6 +16,7 @@ resources:
     cpu: 200m
 
 fixturesEnabled: "true"   # chaos namespace — never true in a public build
+springProfile: ""         # set to chaos-staging ONLY in the staging release
 
 services:
   - name: order-api

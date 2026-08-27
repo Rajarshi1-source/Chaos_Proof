@@ -79,11 +79,17 @@ class DualSourceSampler:
         return run(self.client_queries), run(self.server_queries)
 
     def stream(self, duration_s: float, interval_s: int = SAMPLE_INTERVAL_S,
-               on_tick=None) -> SampleSet:
+               on_tick=None, stop_when=None) -> SampleSet:
+        """stop_when lets the safety plane cut the window short on an abort.
+        Sampling continues for one further tick after the trip so the evidence
+        contains the breach that caused it — a verdict of ABORTED with no record
+        of what tripped is not auditable."""
         samples = SampleSet()
         start = time.monotonic()
         next_tick = start
         while time.monotonic() - start < duration_s:
+            if stop_when is not None and stop_when():
+                break
             next_tick += interval_s
             sampled_at = time.time()               # record the ACTUAL timestamp
             client, server = self.snapshot()

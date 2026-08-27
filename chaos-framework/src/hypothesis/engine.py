@@ -166,6 +166,19 @@ def _check_recovery(inv: Invariant, series: list[tuple[float, float]]) -> Invari
                              "recovered": True})
 
 
+def parse_abort_conditions(raw: list[dict]) -> list[Invariant]:
+    """Abort conditions reuse the Invariant shape but carry NEITHER tolerance_s
+    nor recover_within_s: an abort is instantaneous by definition. The watchdog
+    and the Litmus promProbes both read this one declaration, so the in-band and
+    out-of-band paths cannot drift apart."""
+    out = []
+    for r in raw:
+        out.append(Invariant(
+            name=r["name"], source=r["source"], metric=r["metric"],
+            comparator=r["comparator"], threshold=float(r["threshold"])))
+    return out
+
+
 def parse_invariants(raw: list[dict]) -> list[Invariant]:
     out = []
     for r in raw:

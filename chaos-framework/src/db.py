@@ -67,7 +67,9 @@ def persist_run(*, spec: dict, verdict: str | None, reason: str | None,
                 fault_injected_at: float, finished_at: float,
                 load_facts, samples, script_sha256: str, git_sha: str | None,
                 invariant_outcomes: list, check_list: list | None = None,
-                score=None) -> int:
+                score=None, blast_radius: dict | None = None,
+                chaos_engine: str | None = None, preflight: dict | None = None,
+                cleanup_log: dict | None = None, abort: dict | None = None) -> int:
     """Everything about one run, one transaction. verdict None means the run was
     valid but unevaluated — never invent HELD."""
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
@@ -93,14 +95,18 @@ def persist_run(*, spec: dict, verdict: str | None, reason: str | None,
             """INSERT INTO experiment_executions
                    (experiment, experiment_type_id, hypothesis_id, verdict,
                     verdict_reason, git_sha, fault_injected_at, finished_at,
-                    scoring_epoch_id, score, weights_denominator)
+                    scoring_epoch_id, score, weights_denominator,
+                    blast_radius, chaos_engine, abort_reason, state)
                VALUES (%s, %s, %s, %s, %s, %s, to_timestamp(%s), to_timestamp(%s),
-                       %s, %s, %s)
+                       %s, %s, %s, %s, %s, %s, 'finished')
                RETURNING id""",
             (spec["name"], type_id, hypothesis_id, verdict, reason, git_sha,
              fault_injected_at, finished_at, epoch_id,
              score.score if score else None,
-             score.weights_denominator if score else None))
+             score.weights_denominator if score else None,
+             json.dumps(blast_radius) if blast_radius else None,
+             chaos_engine,
+             (abort or {}).get("condition")))
         execution_id = cur.fetchone()[0]
 
         cur.execute(
@@ -134,6 +140,35 @@ def persist_run(*, spec: dict, verdict: str | None, reason: str | None,
                  c.score, c.expected_value, c.actual_value, c.message,
                  json.dumps(c.details)))
 
+        if preflight:
+            cur.execute(
+                """INSERT INTO preflight_decisions
+                       (execution_id, experiment, decision, reason, blast_radius, evidence)
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
+                (execution_id, spec["name"], preflight.get("decision", "proceed"),
+                 preflight.get("reason"),
+                 json.dumps(blast_radius) if blast_radius else None,
+                 json.dumps(preflight.get("evidence", {}))))
+
+        if abort:
+            cur.execute(
+                """INSERT INTO abort_events
+                       (execution_id, path, condition, observed, threshold,
+                        comparator, evidence)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                (execution_id, abort["path"], abort.get("condition") or "unknown",
+                 abort.get("observed"), abort.get("threshold"),
+                 abort.get("comparator"), json.dumps(abort.get("evidence", {}))))
+
+        if cleanup_log:
+            cur.execute(
+                """INSERT INTO cleanup_logs
+                       (execution_id, steps, escalated, escalation_reason)
+                   VALUES (%s, %s, %s, %s)""",
+                (execution_id, json.dumps(cleanup_log.get("steps", [])),
+                 cleanup_log.get("escalated", False),
+                 cleanup_log.get("escalation_reason")))
+
         rows = [(execution_id, s.sampled_at, src, m, v)
                 for s in samples.samples
                 for src, vals in (("k6", s.client), ("prometheus", s.server))
@@ -156,3 +191,27 @@ def _client_error_rate(samples) -> float | None:
 def _client_p99(samples) -> float | None:
     series = samples.client_series("client_p99_ms")
     return max(series) if series else None
+
+
+def persist_refusal(spec: dict, verdict: str, reason: str, evidence: dict) -> int:
+    """A refusal is EVIDENCE, not an absence. SKIPPED and DENIED get their own
+    execution row so the dashboard can show that the framework declined and why —
+    a silent no-op teaches nothing, a recorded refusal proves the guardrail fired."""
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        type_id = ensure_experiment_type(
+            cur, spec["name"], spec["litmus_fault"],
+            int(spec["fault_duration_s"]), int(spec["recovery_window_s"]))
+        cur.execute(
+            """INSERT INTO experiment_executions
+                   (experiment, experiment_type_id, verdict, verdict_reason,
+                    finished_at, state)
+               VALUES (%s, %s, %s, %s, now(), 'finished') RETURNING id""",
+            (spec["name"], type_id, verdict, reason))
+        execution_id = cur.fetchone()[0]
+        cur.execute(
+            """INSERT INTO preflight_decisions
+                   (execution_id, experiment, decision, reason, policy_rule, evidence)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (execution_id, spec["name"], verdict, reason,
+             evidence.get("policy_rule"), json.dumps(evidence)))
+    return execution_id
