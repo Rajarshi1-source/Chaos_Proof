@@ -301,7 +301,7 @@ Each phase ends with a **gate**: a demonstrable condition, not a checklist. If t
 - **`chaos-cleanup` CronJob** every 5 minutes as the out-of-band path; alert on `chaosproof_orphaned_cleanups_total > 0`.
 - **Fenced Redis lock** — `SET NX chaos:lock:{namespace}` with the **execution id as the value**, ownership re-verified before every mutating call. An unfenced lock lets a stalled runner resume and act while a successor holds it, making every result unattributable.
 
-> **GATE 5** — trigger network-partition with the fallback disabled; client availability crosses 80%; the probe trips, the fault halts mid-experiment, the cleanup saga runs, and steady state is re-established. Verdict `ABORTED`. This is demo beat 3.
+> **GATE 5** — trigger network-partition with the fallback disabled; client availability crosses 80%; the probe trips, the fault halts mid-experiment, the cleanup saga runs, and steady state is re-established. Verdict `ABORTED`. This is demo beat 3. *(Executed 27 Aug 2026 — execution #11. Steady at 1.0000 for 30s; availability collapsed to 0.5000; the Python watchdog tripped `availability_collapse: 0.5 < 0.85`; Litmus verdict `Stopped` at ~30s of a declared 120s; verdict `ABORTED`, score `none`. All four saga steps OK, including `verify_steady_state: client availability 1.0000 >= 0.99 (recovered 302s after cleanup)`. Reaching it surfaced five real defects — see the Phase 5 commit.)*
 
 ---
 

@@ -714,7 +714,7 @@ MAX_BUDGET_BURN_PCT      = 2.0</pre></div>
   <div class="gate"><span class="gate-label">GATE 5</span>
     <p>Trigger network-partition with the fallback disabled. Client availability crosses 80%, the probe trips, the fault halts mid-experiment, the cleanup saga runs, and steady state is re-established. Verdict <code>ABORTED</code>.</p>
     <p>This is demo beat 3 — <em>"It stopped itself. That's the mechanism that would let me run this in production."</em></p>
-  </div>
+  <p><em>Executed 27 Aug 2026 — execution #11. Steady at 1.0000 for 30s; availability collapsed to 0.5000; the Python watchdog tripped <code>availability_collapse: 0.5 &lt; 0.85</code>; Litmus verdict <code>Stopped</code> at ~30s of a declared 120s; verdict <code>ABORTED</code>, score <code>none</code>. All four saga steps OK, including <code>verify_steady_state: client availability 1.0000 &gt;= 0.99 (recovered 302s after cleanup)</code>. Reaching it surfaced five real defects — the circuit breaker was structurally incapable of opening, and my own cleanup ordering left an orphaned fault.</em></p></div>
 </div>
 
 <div class="phase" id="p6">
