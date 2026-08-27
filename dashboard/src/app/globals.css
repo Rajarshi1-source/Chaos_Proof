@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+/**
+ * Dark-first. SRE dashboards are always dark.
+ *
+ * Every colour with meaning is a SEMANTIC TOKEN, never a hardcoded value. The
+ * verdict vocabulary has to read consistently across badges, timeline markers
+ * and chart strokes, and that only holds with one source of colour truth.
+ *
+ * The token that matters most is --verdict-invalid. It is deliberately NEITHER
+ * the pass colour NOR the fail colour, because INVALID is a third thing: it
+ * means nothing was measured. Painting it red would claim the system failed,
+ * which is exactly the lie this project exists to prevent.
+ */
+:root {
+  --bg: #0b0f14;
+  --surface: #121822;
+  --surface-2: #1a2230;
+  --border: #263041;
+  --text: #e6edf6;
+  --text-muted: #8b9bb0;
+
+  /* --- verdict semantics ------------------------------------------------- */
+  --verdict-held: #3fb950;            /* green, unremarkable: the baseline    */
+  --verdict-held-bg: #10251a;
+
+  --verdict-falsified: #d29922;       /* amber: the system was measured and   */
+  --verdict-falsified-bg: #2a2113;    /* found wanting — actionable, not fatal*/
+
+  /* NOT red, NOT green. Slate, and hatched wherever there is area to hatch.  */
+  --verdict-invalid: #7d8da3;
+  --verdict-invalid-bg: #1a2029;
+  --verdict-invalid-hatch: #2b3546;
+
+  /* Refusals are CORRECT behaviour, never failures. Neutral, never red.      */
+  --verdict-skipped: #8b9bb0;
+  --verdict-skipped-bg: #171d26;
+  --verdict-denied: #8b9bb0;
+  --verdict-denied-bg: #171d26;
+
+  /* The safety plane working as designed — arguably the best thing here.     */
+  --verdict-aborted: #d29922;
+  --verdict-aborted-bg: #2a2113;
+
+  /* Genuine framework fault. The ONLY red in the verdict palette.            */
+  --verdict-error: #f85149;
+  --verdict-error-bg: #2b1416;
+
+  --accent: #58a6ff;
+  --epoch-boundary: #a371f7;          /* epoch seams are structural, not alarm */
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); }
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The hatch is what makes INVALID unmistakable at a glance: it is not a shade
+   of pass or fail, it is visibly a different kind of thing. */
+.invalid-hatch {
+  background-color: var(--verdict-invalid-bg);
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 5px,
+    var(--verdict-invalid-hatch) 5px 7px
+  );
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.muted { color: var(--text-muted); }
+
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--border) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 4px;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

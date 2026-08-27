@@ -14,3 +14,7 @@ node_modules/
 
 # Evidence-store dumps (make evidence-backup)
 backups/
+
+# Next.js dashboard build output
+dashboard/.next/
+dashboard/node_modules/

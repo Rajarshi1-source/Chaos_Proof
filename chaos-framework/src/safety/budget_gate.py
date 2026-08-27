@@ -32,6 +32,13 @@ class Gate:
     state: str          # open | restricted | closed
     reason: str
 
+    @property
+    def half_open_trial(self) -> bool:
+        """True when this run is the breaker's single probe. The caller must
+        keep the blast radius low: a half-open trial that itself aborts is how
+        a breaker flaps instead of recovering."""
+        return "HALF-OPEN" in self.reason
+
 
 @dataclass(frozen=True)
 class BreakerState:
@@ -67,13 +74,27 @@ def breaker(cur, namespace: str) -> BreakerState:
         return BreakerState("open", f"manual freeze: {row[0]}")
 
     cur.execute(
-        """SELECT count(*) FROM experiment_executions
+        """SELECT count(*) AS n,
+                  EXTRACT(EPOCH FROM (now() - max(started_at)))/3600.0 AS hours_since
+             FROM experiment_executions
             WHERE verdict = 'aborted' AND started_at >= now() - interval '24 hours'""")
-    aborts = int(cur.fetchone()[0] or 0)
+    row = cur.fetchone()
+    aborts, hours_since = int(row[0] or 0), float(row[1] or 0.0)
     if aborts >= BREAKER_ABORTS_24H:
+        # open -> half_open after the cooldown. A breaker with no recovery path
+        # is a permanent outage of your own tooling: it would stay tripped until
+        # the 24h window rolled, and nobody would learn whether the system had
+        # settled. In half_open EXACTLY ONE low-radius experiment is allowed
+        # through, and its outcome decides closed or open again.
+        if hours_since >= BREAKER_HALF_OPEN_AFTER_HOURS:
+            return BreakerState(
+                "half_open",
+                f"{aborts} aborts in 24h, last {hours_since:.1f}h ago — cooled down; "
+                "one low-radius experiment may probe whether the system has settled")
         return BreakerState(
-            "open", f"{aborts} aborts in 24h — the system keeps behaving worse "
-                    "than predicted")
+            "open", f"{aborts} aborts in 24h (last {hours_since:.1f}h ago) — the system "
+                    f"keeps behaving worse than predicted; cooldown is "
+                    f"{BREAKER_HALF_OPEN_AFTER_HOURS}h")
 
     # Two consecutive INVALID for the SAME experiment.
     cur.execute(
@@ -101,6 +122,11 @@ def gate(namespace: str) -> Gate:
         b = breaker(cur, namespace)
         if b.state == "open":
             return Gate("closed", f"chaos breaker open: {b.reason}")
+        # half_open deliberately falls through to the budget check: the BREAKER
+        # is half-open, the GATE is not closed. Pre-flight applies the
+        # one-low-radius-trial constraint separately, so the policy rule
+        # (gate_state != "open") stays exactly as written.
+        half_open = b.state == "half_open"
 
         spent = _spent_pct(cur, namespace)
 
@@ -111,6 +137,10 @@ def gate(namespace: str) -> Gate:
     if spent >= BUDGET_WARN_PCT:
         return Gate("restricted",
                     f"{spent:.0f}% spent — low-radius experiments only")
+    if half_open:
+        return Gate("open", f"{spent:.1f}% spent; CHAOS BREAKER HALF-OPEN — this run "
+                            "is the single trial that decides whether the breaker "
+                            "closes or reopens")
     return Gate("open", f"{spent:.1f}% spent")
 
 

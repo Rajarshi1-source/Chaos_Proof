@@ -11,7 +11,11 @@ loud proves its guardrails are load-bearing.
 
 from dataclasses import dataclass, field
 
-from ..constants import MAX_BUDGET_BURN_PCT, STEADY_STATE_WINDOW_S
+from ..constants import (
+    HALF_OPEN_MAX_BLAST_SCORE,
+    MAX_BUDGET_BURN_PCT,
+    STEADY_STATE_WINDOW_S,
+)
 from . import blast_radius, budget_gate, policy
 
 
@@ -77,6 +81,18 @@ def run(spec: dict, sampler, require_override: bool = False) -> PreflightVerdict
     if gate.state != "open":
         return PreflightVerdict.deny(f"budget gate {gate.state}: {gate.reason}",
                                      blast_radius=radius.to_dict())
+
+    # 4b. A half-open breaker permits EXACTLY ONE LOW-RADIUS trial. Letting a
+    # large-radius experiment be the probe is how a breaker flaps instead of
+    # recovering: the trial itself aborts, the breaker reopens, and nothing was
+    # learned about whether the system had settled.
+    if gate.half_open_trial and radius.score() > HALF_OPEN_MAX_BLAST_SCORE:
+        return PreflightVerdict.deny(
+            f"chaos breaker is half-open and this run's blast score is "
+            f"{radius.score()}, above the {HALF_OPEN_MAX_BLAST_SCORE} ceiling for a "
+            f"recovery trial — the probe that decides whether the breaker closes "
+            f"must itself be low-radius",
+            blast_radius=radius.to_dict(), breaker="half_open")
 
     # 5. Declarative policy — first DENY wins, then REQUIRE_OVERRIDE, else ALLOW.
     decision = policy.evaluate({

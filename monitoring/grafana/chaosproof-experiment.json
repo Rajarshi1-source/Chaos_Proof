@@ -1,0 +1,163 @@
+{
+  "uid": "chaosproof-experiment",
+  "title": "ChaosProof — during-experiment",
+  "tags": ["chaosproof"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "testrun",
+        "label": "k6 testrun",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(k6_http_reqs_total, testrun)",
+        "refresh": 2,
+        "current": { "text": "steady-120rps", "value": "steady-120rps" }
+      },
+      {
+        "name": "namespace",
+        "label": "target namespace",
+        "type": "custom",
+        "query": "target-app,chaos-staging",
+        "current": { "text": "target-app", "value": "target-app" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Client vs server availability — the gap is requests that never reached a server",
+      "description": "Server-side metrics structurally under-report a pod kill: a request that fails at connection establishment never increments a counter that only exists inside a running server. The client series is the primary SLI; the gap between them is a direct estimate of requests that died before they were served.",
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0.8,
+          "max": 1.0,
+          "unit": "percentunit",
+          "custom": { "fillOpacity": 8, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "client (k6, primary)" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "server (corroboration only)" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "client (k6, primary)",
+          "expr": "1 - avg(k6_http_req_failed_rate{testrun=\"$testrun\"})"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "server (corroboration only)",
+          "expr": "sum(rate(http_server_requests_seconds_count{namespace=\"$namespace\",status!~\"5..\"}[30s])) / clamp_min(sum(rate(http_server_requests_seconds_count{namespace=\"$namespace\"}[30s])), 0.001)"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Achieved rps vs floor",
+      "description": "The validity gate reads this. Below the floor a verdict is INVALID, never PASS: no traffic means no evidence.",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 90 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "achieved",
+          "expr": "sum(rate(k6_http_reqs_total{testrun=\"$testrun\"}[30s]))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Dropped iterations — load-generator health, NOT system health",
+      "description": "Under an open workload model, drops mean k6 could not start iterations at the requested rate: the GENERATOR saturated before the system did. Any conclusion about the system is then unfounded, so the run is INVALID.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "dropped",
+          "expr": "sum(increase(k6_dropped_iterations_total{testrun=\"$testrun\"}[1m]))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "CPU throttle RATIO (dimensionless)",
+      "description": "Ratio, never raw throttled-period counters: those move with replica count and window length, which makes the check meaningless.",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1 } },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{pod}}",
+          "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"$namespace\"}[30s])) / clamp_min(sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"$namespace\"}[30s])), 0.001)"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Resilience4j circuit-breaker state",
+      "description": "An unobservable circuit breaker is unverifiable. If this panel is empty, resilience4j-micrometer is missing from the classpath and every pattern check is silently validating nothing.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{name}} {{state}}",
+          "expr": "resilience4j_circuitbreaker_state{namespace=\"$namespace\",state=\"open\"}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Litmus platform health (3.29.0+)",
+      "description": "The chaos platform observed alongside the target. Without this, 'the chaos framework failed silently' is indistinguishable from 'everything passed'.",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 17 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "litmus experiments running",
+          "expr": "sum(litmuschaos_experiment_running) or vector(0)"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "chaos-runner pods",
+          "expr": "count(kube_pod_info{namespace=~\"target-app|chaos-staging\",pod=~\".*-runner\"}) or vector(0)"
+        }
+      ]
+    }
+  ]
+}

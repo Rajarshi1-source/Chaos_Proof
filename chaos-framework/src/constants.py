@@ -36,3 +36,18 @@ MAX_VERDICT_FLIP_RATE = 0.05
 BUDGET_WARN_PCT = 50.0
 BUDGET_FREEZE_PCT = 80.0
 MAX_BUDGET_BURN_PCT = 2.0
+# The single probe a half-open chaos breaker allows through must be low-radius,
+# or the trial that decides recovery is itself the next outage: it aborts, the
+# breaker reopens, and nothing was learned about whether the system had settled.
+#
+# DERIVED FROM THE ACTUAL SCORE DISTRIBUTION, not copied from the policy file's
+# require-override threshold of 60 — which is what it was first, and that made
+# the recovery path UNREACHABLE. blast score is
+#     affected_pods + 10*namespaces + 25*user_facing + int(50*replica_fraction)
+# so the SMALLEST experiment this system can express (1 pod, 1 namespace,
+# user-facing, 50% of 2 replicas) already scores 61, and a full partition
+# scores 87. A ceiling of 60 sat below the entire range: no experiment could
+# ever be the trial, so the breaker could only recover by waiting out its own
+# 24h window. 65 admits the single-pod class and still excludes the
+# full-partition class, which is the distinction "low-radius" is meant to draw.
+HALF_OPEN_MAX_BLAST_SCORE = 65

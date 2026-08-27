@@ -1,0 +1,54 @@
+{
+  "segments": [
+    {
+      "epochId": 1,
+      "epochSha": "aaa",
+      "changeReason": "epoch 1 - initial scorer",
+      "points": [
+        {
+          "executionId": 1,
+          "at": "2026-08-01T00:00:00+00:00",
+          "score": 0.45,
+          "epochId": 1,
+          "retroScored": false
+        },
+        {
+          "executionId": 2,
+          "at": "2026-08-02T00:00:00+00:00",
+          "score": 0.62,
+          "epochId": 1,
+          "retroScored": false
+        }
+      ]
+    },
+    {
+      "epochId": 2,
+      "epochSha": "bbb",
+      "changeReason": "added alert validation to the weighted checks",
+      "points": [
+        {
+          "executionId": 3,
+          "at": "2026-08-03T00:00:00+00:00",
+          "score": 0.72,
+          "epochId": 2,
+          "retroScored": true
+        },
+        {
+          "executionId": 4,
+          "at": "2026-08-04T00:00:00+00:00",
+          "score": 0.92,
+          "epochId": 2,
+          "retroScored": false
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "epochId": 2,
+      "at": "2026-08-03T00:00:00+00:00",
+      "changeReason": "added alert validation to the weighted checks"
+    }
+  ],
+  "excluded": []
+}
