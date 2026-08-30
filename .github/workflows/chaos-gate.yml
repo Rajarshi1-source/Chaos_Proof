@@ -70,6 +70,10 @@ env:
   K6OP_CHART_VER: "4.6.0"
   METRICS_SERVER_VER: v0.8.0
   POSTGRES_IMAGE: postgres:18.6-alpine
+  # Derived from measured pod requests, not guessed — see the capacity
+  # pre-flight in chaos-gate for the breakdown.
+  REQUIRED_VCPU: "4"
+  REQUIRED_MEM_GB: "15"
 
 jobs:
   # ==========================================================================
@@ -189,12 +193,16 @@ jobs:
   # 4. chaos-gate — the headline. Real kind cluster, real faults, REAL LOAD.
   # ==========================================================================
   chaos-gate:
-    runs-on: ubuntu-latest
+    # Set the CHAOS_GATE_RUNNER repository variable to a larger runner label to
+    # enable this job; `ubuntu-latest` is 2 vCPU and provably cannot host it
+    # (see the capacity pre-flight below for the arithmetic).
+    #
     # A t3.medium-shaped runner produces INVALID runs rather than insight: the
     # load plane plus 5s scraping needs real headroom, and an experiment that
     # fails because the NODE was starved has measured the runner, not the
-    # system. If `ci_runner` starts reporting LOAD_PLANE_ABSENT here, move this
-    # to a larger runner — never lower `min_rps_floor`.
+    # system. If `ci_runner` reports LOAD_PLANE_ABSENT here, the answer is a
+    # bigger runner — never a lower `min_rps_floor`.
+    runs-on: ${{ vars.CHAOS_GATE_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 60
     needs: [unit, replay-eval]
     services:
@@ -216,6 +224,41 @@ jobs:
       ALERTMANAGER_URL: http://localhost:19093
       TESTRUN: ci-120rps
     steps:
+      # ---------------------------------------------------------------------
+      # Capacity pre-flight. FIRST, and deliberately not clever.
+      #
+      # Measured from a real failed run (dump attached to run 33307517572):
+      #
+      #   node allocatable          2000m   (ubuntu-latest is 2 vCPU)
+      #   kube-system               1050m   etcd, apiserver, scheduler,
+      #                                     controller-manager, coredns x2
+      #   monitoring                 200m   Prometheus + Alertmanager
+      #   litmus / k6-operator       200m
+      #   target-app                2300m   6 JVMs at 2 replicas each
+      #   k6 runner                  250m
+      #   -----------------------------------------------------------------
+      #   REQUIRED                  ~4000m  vs 2000m available
+      #
+      # Without this check that shortfall surfaces 14 minutes in, as three
+      # opaque "Progress deadline exceeded" lines from `helm --wait`, with the
+      # real cause (5 pods Pending / Insufficient cpu) visible only inside the
+      # cluster dump. Ten seconds and an explicit message beats that.
+      #
+      # This FAILS rather than skips, on purpose. A chaos gate that quietly
+      # opts out on an undersized runner is a green badge over a run that
+      # measured nothing — the exact defect this pipeline exists to prevent.
+      # ---------------------------------------------------------------------
+      - name: Capacity pre-flight — can this runner host the gate at all?
+        run: |
+          CORES=$(nproc)
+          MEM_GB=$(( $(getconf _PHYS_PAGES) * $(getconf PAGE_SIZE) / 1073741824 ))
+          echo "runner: ${CORES} vCPU, ${MEM_GB} GB, label '${{ vars.CHAOS_GATE_RUNNER || 'ubuntu-latest' }}'"
+          if [ "$CORES" -lt "$REQUIRED_VCPU" ] || [ "$MEM_GB" -lt "$REQUIRED_MEM_GB" ]; then
+            echo "::error title=chaos-gate: runner too small::RUNNER_TOO_SMALL — this runner has ${CORES} vCPU / ${MEM_GB}GB; the chaos gate needs at least ${REQUIRED_VCPU} vCPU / ${REQUIRED_MEM_GB}GB. Pod requests total ~4000m against ${CORES}000m allocatable, so the target-app pods cannot schedule and helm --wait times out after 10 minutes. Set the CHAOS_GATE_RUNNER repository variable to a larger runner label. Do NOT fix this by lowering min_rps_floor or dropping replicas: a gate that cannot generate load reports success without evidence."
+            exit 1
+          fi
+          echo "capacity OK"
+
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
@@ -226,7 +269,7 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v4.2.0          # Helm 3 bug fixes ended 8 July 2026
 
@@ -343,7 +386,7 @@ jobs:
 
       - name: Upload cluster dump
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: chaos-gate-dump-${{ github.run_id }}
           path: /tmp/dump
@@ -406,7 +449,7 @@ jobs:
             --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v4.2.0
 

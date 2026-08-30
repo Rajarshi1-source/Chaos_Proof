@@ -347,3 +347,46 @@ def test_the_pinned_kind_cli_understands_the_node_images_containerd(workflow):
     >= 0.32.0 to read it."""
     major, minor = (int(p) for p in workflow["env"]["KIND_VERSION"].lstrip("v").split(".")[:2])
     assert (major, minor) >= (0, 32)
+
+
+# --------------------------------------------------------------------------- #
+# Capacity. The gate needs a runner it can actually fit on, and it has to say
+# so BEFORE building a cluster rather than 14 minutes later via three opaque
+# "Progress deadline exceeded" lines from `helm --wait`.
+# --------------------------------------------------------------------------- #
+
+def test_the_capacity_preflight_runs_before_anything_expensive(chaos_gate):
+    steps = chaos_gate["steps"]
+    guard = next(i for i, s in enumerate(steps) if "nproc" in s.get("run", ""))
+    cluster = next(i for i, s in enumerate(steps)
+                   if s.get("uses", "").startswith("helm/kind-action"))
+    assert guard < cluster, "the capacity check must precede the cluster build"
+    assert guard == 0, "it should be the very first step — it costs a second"
+
+
+def test_the_capacity_preflight_fails_rather_than_skips(chaos_gate):
+    """A chaos gate that quietly opts out on an undersized runner is a green
+    badge over a run that measured nothing — the exact defect this pipeline
+    exists to prevent."""
+    guard = next(s for s in chaos_gate["steps"] if "nproc" in s.get("run", ""))
+    assert "exit 1" in guard["run"]
+    assert "RUNNER_TOO_SMALL" in guard["run"]
+    assert "::error" in guard["run"]
+
+
+def test_the_capacity_requirement_exceeds_a_default_hosted_runner(workflow):
+    """`ubuntu-latest` is 2 vCPU. Measured pod requests total ~4000m, so the
+    requirement must be above 2 or the check passes and the job still fails."""
+    assert int(workflow["env"]["REQUIRED_VCPU"]) > 2
+
+
+def test_the_runner_label_is_overridable_without_editing_the_workflow(chaos_gate):
+    assert "CHAOS_GATE_RUNNER" in str(chaos_gate["runs-on"])
+
+
+def test_no_action_targets_the_deprecated_node_20_runtime(workflow):
+    """actions/upload-artifact@v4 and azure/setup-helm@v4 are Node 20."""
+    deprecated = {"actions/upload-artifact@v4", "azure/setup-helm@v4"}
+    for job in workflow["jobs"].values():
+        for step in job["steps"]:
+            assert step.get("uses") not in deprecated, f"{step.get('uses')} is Node 20"
