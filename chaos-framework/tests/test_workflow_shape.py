@@ -260,3 +260,44 @@ def test_every_chart_version_is_an_exact_pin(workflow, key):
     version = str(workflow["env"][key])
     assert version.count(".") == 2
     assert all(part.isdigit() for part in version.split("."))
+
+
+# --------------------------------------------------------------------------- #
+# Dependency names. The first CI run installed the PyPI project `celpy` instead
+# of `cel-python` — different distributions, colliding import name — so the CEL
+# evaluator was absent, policy.py failed closed, and all nine safety rules
+# denied. The job failed for the right reason and said nothing useful about it.
+# --------------------------------------------------------------------------- #
+
+def _pyproject() -> str:
+    return (REPO_ROOT / "chaos-framework" / "pyproject.toml").read_text(encoding="utf-8")
+
+
+def test_the_cel_evaluator_is_declared_as_a_package_extra():
+    """Declared once in metadata rather than spelled from memory in each
+    workflow step."""
+    text = _pyproject()
+    assert "[project.optional-dependencies]" in text
+    assert "cel-python" in text
+
+
+def test_no_workflow_step_installs_the_wrong_distribution(workflow):
+    """`celpy` is the import name and someone else's project on PyPI."""
+    for job in workflow["jobs"].values():
+        for step in job["steps"]:
+            run = step.get("run", "")
+            if "pip install" in run:
+                assert " celpy" not in run, (
+                    "the distribution is `cel-python`; `pip install celpy` "
+                    "installs an unrelated project")
+
+
+def test_the_job_running_policy_eval_installs_the_policy_extra(workflow):
+    """Otherwise the evaluator is missing, every rule fails closed, and the job
+    fails for a reason its own output does not name."""
+    for name, job in workflow["jobs"].items():
+        runs = [s.get("run", "") for s in job["steps"]]
+        if not any("evals.policy_eval" in r for r in runs):
+            continue
+        installs = " ".join(r for r in runs if "pip install" in r)
+        assert "policy" in installs, f"job {name} runs policy_eval without the policy extra"

@@ -106,7 +106,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-      - run: pip install -e "./chaos-framework[test]" celpy
+      - run: pip install -e "./chaos-framework[test,policy]"
 
       # Every safety rule carries a must-allow and a must-deny case, and each
       # rule must be the one that FIRES on its own must-deny case — which is how
@@ -219,7 +219,7 @@ jobs:
         with:
           version: v4.2.0          # Helm 3 bug fixes ended 8 July 2026
 
-      - run: pip install -e "./chaos-framework[test]" celpy
+      - run: pip install -e "./chaos-framework[test,policy]"
 
       - name: Evidence store schema
         run: |

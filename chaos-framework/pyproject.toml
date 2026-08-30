@@ -17,6 +17,14 @@ test = [
     "pytest>=8.4",
     "pytest-cov>=7.0",
 ]
+# The CEL evaluator for policy/chaos_safety.yaml. The DISTRIBUTION is
+# `cel-python`; the IMPORT is `celpy`. They differ, and `pip install celpy`
+# installs an unrelated project that satisfies neither — which is exactly what
+# the first CI run did, leaving policy.py's fail-closed path to deny all nine
+# rules. Declared here so no workflow has to spell the name from memory.
+policy = [
+    "cel-python>=0.5",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

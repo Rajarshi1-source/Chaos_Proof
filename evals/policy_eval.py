@@ -38,6 +38,27 @@ def merged(overrides: dict) -> dict:
 
 
 def main() -> int:
+    # Fail fast, and name the real cause.
+    #
+    # policy.py fails CLOSED when the CEL evaluator is missing: every rule
+    # denies. That is the right runtime behaviour — refusing to inject beats
+    # injecting under a policy nobody could evaluate — but as an eval result it
+    # is close to unreadable. The first CI run printed eighteen FAIL lines, all
+    # blaming `deny-chaosproof-self` for firing on innocent input, when the
+    # actual fault was a workflow installing the PyPI project `celpy` instead
+    # of `cel-python` (different distributions; the import name is what
+    # collides). Nothing in that output pointed at a missing dependency.
+    #
+    # A gate that cannot say why it failed gets ignored, so this check runs
+    # before any rule does.
+    if not policy.HAVE_CEL:
+        print("POLICY EVAL: FAILED — the CEL evaluator is not installed, so every "
+              "rule fails closed and no rule can actually be tested.")
+        print("  install:  pip install -e './chaos-framework[policy]'")
+        print("  note:     the distribution is `cel-python`; the import is `celpy`. "
+              "`pip install celpy` is a DIFFERENT project and will not work.")
+        return 1
+
     rules = policy.load_rules()
     failures: list[str] = []
     print(f"{'RULE':42} {'EFFECT':17} MUST_DENY  MUST_ALLOW")
