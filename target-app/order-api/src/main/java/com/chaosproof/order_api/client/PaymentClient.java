@@ -24,9 +24,21 @@ public class PaymentClient {
         this.flags = flags;
     }
 
-    @CircuitBreaker(name = "paymentService", fallbackMethod = "queuedFallback")
+    // GATE 7: @CircuitBreaker deliberately removed. This is the change the CI
+    // chaos gate exists to refuse.
+    //
+    // The graceful degradation is kept, by hand, so that ONLY the breaker is
+    // gone. Deleting the annotation outright also deletes `fallbackMethod`, and
+    // the resulting build fails so hard that pre-flight refuses to inject into
+    // it - a correct gate failure, but one that never reaches the hypothesis.
+    // Keeping the catch isolates the exact property the experiment asserts:
+    // the user still gets a response, and nothing opens a circuit.
     public PaymentResult charge(PaymentRequest request) {
-        return rest.post().uri("/api/payments").body(request).retrieve().body(PaymentResult.class);
+        try {
+            return rest.post().uri("/api/payments").body(request).retrieve().body(PaymentResult.class);
+        } catch (RuntimeException cause) {
+            return queuedFallback(request, cause);
+        }
     }
 
     /**
