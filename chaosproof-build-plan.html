@@ -751,6 +751,35 @@ MAX_BUDGET_BURN_PCT      = 2.0</pre></div>
   <div class="gate"><span class="gate-label">GATE 7</span>
     <p>Open a PR removing <code>@CircuitBreaker</code> from <code>order-api</code>'s payment call. The gate fails with <code>HYPOTHESIS_FALSIFIED — circuit_breaker_opens never activated</code>. Restore it; the gate passes.</p>
     <p>This is demo beat 5.</p>
+    <p><em>Executed 30 Aug 2026 on the live kind cluster. Branch
+    <code>gate7/remove-circuit-breaker</code>: execution #26
+    <code>HYPOTHESIS_FALSIFIED &mdash; circuit_breaker_opens never activated
+    (stayed at 0, needed 1 within 90s)</code>, plus #27 falsified on
+    <code>client_p99_holds</code> (3133ms vs 800ms) &mdash; gate exit 1. On
+    <code>main</code> with the annotation restored, same cluster and same
+    generator config: #28/#29 both <code>HYPOTHESIS_HELD</code>, gate exit 0.
+    Evidence from the equivalent earlier pass (#20): the breaker opens 35s into
+    the partition, short-circuits peak at 120 calls/s, client availability holds
+    at 1.0000 via the fallback and client p99 spikes to 3063ms and recovers.</em></p>
+    <p><em>Reaching it surfaced <strong>six pre-existing defects</strong>, every
+    one of them invisible from inside the framework. The two that matter most:
+    <strong>D-A</strong> &mdash; client availability was an unweighted
+    <code>avg()</code> over k6's per-status label series, so it reported exactly
+    0.5000 for any run containing a single failed request (17,695 successes
+    against 4 failures read as 50% availability), which means GATE 5's recorded
+    &ldquo;collapsed to 0.5000&rdquo; was that artifact appearing rather than a
+    measurement. <strong>D-C</strong> &mdash; Litmus 3.31.0 strips double quotes
+    from <code>promProbe</code> queries, so every in-band abort probe had failed
+    with a PromQL parse error since Phase 5; with <code>stopOnFailure: true</code>
+    that halted each experiment seconds after injection, and the engine reached
+    <code>Stopped</code>, which is also exactly what a successful abort looks
+    like.</em></p>
+    <p><em>On the specified verdict: deleting <code>@CircuitBreaker</code>
+    outright also deletes its <code>fallbackMethod</code>, and that build sits
+    below its own 99% steady-state floor with no fault injected at all, so
+    pre-flight refuses it (<code>SKIPPED</code>) before the hypothesis is ever
+    tested. A correct gate failure, but a different one. The run above keeps the
+    degradation by hand so that only the breaker is gone.</em></p>
   </div>
 </div>
 
