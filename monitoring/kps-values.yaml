@@ -6,6 +6,17 @@ prometheus:
                                       # makes the budget incomputable (safety-plane skill)
     enableRemoteWriteReceiver: true   # k6 remote-writes its client-side series here;
                                       # the safety-plane promProbes read them (Phase 5)
+    # REQUIRED for a client-side latency SLI that means anything (defect D-B,
+    # found by the Phase 7 gate). k6's prometheus-rw exports Trend metrics as
+    # GAUGES holding a statistic accumulated since the start of the test run,
+    # not over the push interval. That value has an unbounded memory: it cannot
+    # resolve a 60s fault window, and comparing it to a 30s-windowed SLO
+    # compares two different things. Native histograms let k6 ship the raw
+    # distribution and Prometheus compute the quantile over the window we ask
+    # for — which is the only way `client_p99_ms` can honestly be held against
+    # an 800ms SLO.
+    enableFeatures:
+      - native-histograms
     # Pick up ServiceMonitors/Rules from any namespace without release-label games:
     serviceMonitorSelectorNilUsesHelmValues: false
     podMonitorSelectorNilUsesHelmValues: false

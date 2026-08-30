@@ -57,7 +57,7 @@
         {
           "refId": "A",
           "legendFormat": "client (k6, primary)",
-          "expr": "1 - avg(k6_http_req_failed_rate{testrun=\"$testrun\"})"
+          "expr": "1 - (sum(rate(k6_http_reqs_total{testrun=\"$testrun\",expected_response=\"false\"}[30s])) or vector(0)) / sum(rate(k6_http_reqs_total{testrun=\"$testrun\"}[30s]))"
         },
         {
           "refId": "B",

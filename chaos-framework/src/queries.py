@@ -14,14 +14,62 @@ W = "30s"  # SLI window — 6 samples at 5s scrape; NEVER widen to make a query 
 CLIENT = {
     # Achieved arrival rate — what the validity gate reads.
     "client_rps": f'sum(rate(k6_http_reqs_total{{testrun="$TESTRUN"}}[{W}]))',
-    # Availability from the client's perspective. http_req_failed is a k6 Rate
-    # metric (0..1 over the push interval).
-    "client_availability": f'1 - avg(k6_http_req_failed_rate{{testrun="$TESTRUN"}})',
-    # Client p99 latency in ms. VERIFIED 23 Aug 2026: k6 2.2.0 prometheus-rw
-    # exports duration Trends in SECONDS (base units) — corroborated against the
-    # server-side histogram (k6 13.0ms vs server 6.5ms on the same window).
-    # Without the *1000 an 800ms threshold silently becomes an 800-SECOND one.
-    "client_p99_ms": f'max(k6_http_req_duration_p99{{testrun="$TESTRUN"}}) * 1000',
+    # Availability from the client's perspective — VOLUME-WEIGHTED, from the
+    # request counter.
+    #
+    # DEFECT D-A, found by the Phase 7 gate and corrected 30 Aug 2026. This was
+    #     1 - avg(k6_http_req_failed_rate{testrun="$TESTRUN"})
+    # and it did not measure availability. k6 exports http_req_failed as a Rate
+    # metric split by the `status` and `expected_response` system tags, so once
+    # a single request has failed there are exactly two series — one pinned at 0
+    # and one pinned at 1 — and their unweighted `avg` is 0.5 forever, whatever
+    # the real traffic mix. Observed live: 17,695 successes against 4 failures
+    # (true availability 99.98%) reported as 0.5000.
+    #
+    # The failure mode is worse than a wrong number. It is THREE-VALUED — 1.0
+    # before the first failure, 0.5 after it, 0.0 only if every series fails —
+    # so it reads perfect on a clean run and looks like a catastrophic outage on
+    # a run with one bad request. That is what GATE 5's "availability collapsed
+    # to 0.5000" was, and it is why an abort threshold of 0.80 tripped on a
+    # system that was serving fine.
+    #
+    # Counting failures rather than successes is deliberate: when EVERY request
+    # fails there is no expected_response="true" series at all, and a
+    # success/total ratio would go empty — reporting INVALID for a total outage,
+    # which is precisely backwards. `or vector(0)` supplies the no-failures
+    # case; an absent DENOMINATOR (no traffic at all) still yields no samples,
+    # which is INVALID, and correctly so.
+    "client_availability": (
+        f'1 - (sum(rate(k6_http_reqs_total{{testrun="$TESTRUN",'
+        f'expected_response="false"}}[{W}])) or vector(0))'
+        f' / sum(rate(k6_http_reqs_total{{testrun="$TESTRUN"}}[{W}]))'
+    ),
+    # Client p99 latency in ms, over the SAME [30s] window as every other SLI.
+    #
+    # DEFECT D-B, found alongside D-A. This was
+    #     max(k6_http_req_duration_p99{testrun="$TESTRUN"}) * 1000
+    # reading k6's trend-stat GAUGES. Those gauges hold a statistic accumulated
+    # since the start of the test run, so their window is the whole run: a p99
+    # cannot fall back after a fault, cannot resolve a 60s fault window, and is
+    # not comparable to the 30s-windowed SLO it is checked against. Taking `max`
+    # across the per-status series compounded it by letting a handful of failed
+    # requests set the p99 for all of them.
+    #
+    # Observed live, same instant: cumulative gauge 8445ms, windowed native
+    # histogram 17.98ms, server-side histogram 17.01ms. The windowed client
+    # figure sits just above the server figure, which is what a correct
+    # client-side measurement looks like — it includes the network the server
+    # never sees. The 470x error was in the direction that silently falsifies
+    # every latency invariant the project has.
+    #
+    # k6 ships the raw distribution as a native histogram when the
+    # native-histograms feature is on (k6 side: K6_FEATURES; Prometheus side:
+    # --enable-feature=native-histograms). The `_seconds` suffix is k6's, and it
+    # settles the unit question that the *1000 above was guessing at.
+    "client_p99_ms": (
+        f'histogram_quantile(0.99, sum(rate('
+        f'k6_http_req_duration_seconds{{testrun="$TESTRUN"}}[{W}]))) * 1000'
+    ),
     # Generator saturation — drops mean the GENERATOR was the bottleneck.
     "dropped_iterations": f'sum(k6_dropped_iterations_total{{testrun="$TESTRUN"}}) or vector(0)',
 }

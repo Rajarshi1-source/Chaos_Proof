@@ -47,6 +47,24 @@ spec:
         value: "25m"
       - name: K6_PROMETHEUS_RW_SERVER_URL
         value: http://kps-kube-prometheus-stack-prometheus.monitoring:9090/api/v1/write
+      # Defect D-B (found by the Phase 7 gate): with trend stats exported as
+      # GAUGES, k6 ships a statistic accumulated since the START OF THE TEST
+      # RUN. Its memory is the whole run, so it cannot resolve a 60s fault
+      # window and it is not comparable to a 30s-windowed SLO — a p99 that
+      # spent the first minute of a 25-minute run at JVM cold start stays
+      # elevated for the rest of it, and every latency invariant reads that
+      # instead of the fault. Native histograms ship the DISTRIBUTION and let
+      # Prometheus compute the quantile over the window actually asked for.
+      # Needs `--enable-feature=native-histograms` on Prometheus; see
+      # monitoring/kps-values.yaml.
+      # K6_FEATURES, not K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM: k6 2.2.0
+      # accepts the latter but logs it as a deprecated alias, and a
+      # load-bearing signal riding a deprecated alias stops working on the
+      # next k6 bump without anyone touching it.
+      - name: K6_FEATURES
+        value: native-histograms
+      # Kept for the gauge-based panels that only ever read avg/min/max, where
+      # a run-cumulative value is honest. Never for a windowed SLI.
       - name: K6_PROMETHEUS_RW_TREND_STATS
         value: "p(99),p(95),avg,min,max"
       - name: K6_PROMETHEUS_RW_PUSH_INTERVAL

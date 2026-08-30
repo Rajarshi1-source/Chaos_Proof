@@ -22,7 +22,14 @@ from dataclasses import dataclass, field
 from ..constants import FAIL_THRESHOLD, PASS_THRESHOLD, WEIGHTS
 
 SCORER_VERSION = "1.0.0"
-SLO_VERSION = 1
+# Bumped 1 -> 2 on 30 Aug 2026. The SCORER did not change; the definition of two
+# SLIs it consumes did (defects D-A and D-B in src/queries.py — client
+# availability was an unweighted average over per-status label series, and
+# client p99 was a run-cumulative gauge). Scores computed before and after are
+# not comparable, so this opens a new epoch rather than quietly rewriting
+# history. The old scores stay exactly as recorded; the trend line breaks at the
+# boundary and says why.
+SLO_VERSION = 2
 
 
 @dataclass
