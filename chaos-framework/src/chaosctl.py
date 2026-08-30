@@ -196,10 +196,19 @@ def cmd_flakiness(args) -> int:
             print(f"{name:32} {verdict.status:16} {verdict.window_runs:>7} "
                   f"{sigma:>8} {flips:>7}  {authority}")
             if args.apply:
-                transitions.append(quarantine.apply(
-                    cur, name, verdict,
-                    file_issue=not args.no_issue, notify=not args.no_slack))
+                transitions.append(quarantine.apply(cur, name, verdict))
         if args.apply:
+            # COMMIT BEFORE ANNOUNCING. An issue filed for a demotion that then
+            # rolled back leaves GitHub and the evidence store disagreeing —
+            # and the issue is the more visible of the two.
+            conn.commit()
+
+    if args.apply:
+        with _connect() as conn, conn.cursor() as cur:
+            for t in transitions:
+                quarantine.announce(t, file_issue=not args.no_issue,
+                                    notify=not args.no_slack)
+                quarantine.link_issue(cur, t)
             conn.commit()
 
     if not args.apply:

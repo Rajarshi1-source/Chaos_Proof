@@ -17,10 +17,19 @@ The four effects of a demotion, in order, and why the order matters:
      experiment is a bug in the experiment until proven otherwise.
   4. NOTIFY Slack, naming sigma.
 
-Steps 3 and 4 are best-effort and never fail the transition: an unreachable
-Slack webhook or a missing GitHub token must not leave the evidence store
-disagreeing with reality. The demotion is the fact; the announcements are
-convenience.
+THE SPLIT BETWEEN 1-2 AND 3-4 IS A TRANSACTION BOUNDARY, and it was learned
+the hard way. The first version did all four inside one transaction. An
+ambiguous-column error in a cosmetic back-link UPDATE then aborted the
+transaction AFTER the GitHub issue had been created — leaving a filed issue
+announcing a demotion that had just been rolled back. The evidence store said
+one thing and GitHub said another, which is precisely the state rule 1 is
+written to prevent.
+
+So `apply()` touches only the database, the caller COMMITS, and `announce()`
+runs afterwards. Announcements are best-effort in the other direction too: an
+unreachable Slack webhook or a missing GitHub credential must never fail a
+transition that already happened. The demotion is the fact; the announcements
+are convenience.
 """
 
 import json
@@ -57,9 +66,9 @@ class Transition:
         return "  ".join(bits)
 
 
-def apply(cur, experiment: str, verdict: FlakinessVerdict,
-          *, file_issue: bool = True, notify: bool = True) -> Transition:
-    """Record the verdict and run every consequence that follows from it."""
+def apply(cur, experiment: str, verdict: FlakinessVerdict) -> Transition:
+    """DATABASE ONLY. Record the verdict, open an epoch if the gating bit moved,
+    and append the transition. The caller commits; `announce()` runs after."""
     gating_changed = flakiness.record(cur, experiment, verdict)
     t = Transition(experiment, verdict, gating_changed)
 
@@ -68,7 +77,7 @@ def apply(cur, experiment: str, verdict: FlakinessVerdict,
         # the reason is written so the boundary on the trend chart explains
         # itself rather than saying "scorer changed".
         direction = "promoted to gating" if verdict.gating else "quarantined to advisory"
-        reason = (f"{experiment} {direction} — {verdict.reason}")
+        reason = f"{experiment} {direction} — {verdict.reason}"
         try:
             epoch = epochs.open_epoch(cur, reason)
             t.epoch_opened = epoch.sha256
@@ -83,26 +92,44 @@ def apply(cur, experiment: str, verdict: FlakinessVerdict,
     # gating status, and what was sigma then?" — the first question anyone asks
     # when a trend line breaks.
     _record_transition(cur, experiment, verdict, t)
-
-    if verdict.status == "flaky":
-        if file_issue:
-            try:
-                t.issue_url = open_github_issue(experiment, verdict)
-            except Exception as exc:                               # noqa: BLE001
-                t.errors.append(f"issue not filed: {type(exc).__name__}: {exc}")
-        if notify:
-            try:
-                t.notified = post_slack(experiment, verdict, t.epoch_opened)
-            except Exception as exc:                               # noqa: BLE001
-                t.errors.append(f"slack notice not sent: {type(exc).__name__}: {exc}")
-        if t.issue_url:
-            cur.execute("""UPDATE flakiness_transitions SET issue_url = %s
-                            WHERE id = (SELECT max(id) FROM flakiness_transitions f
-                                        JOIN experiment_types et ON et.id = f.experiment_type_id
-                                        WHERE et.name = %s)""",
-                        (t.issue_url, experiment))
-
     return t
+
+
+def announce(t: Transition, *, file_issue: bool = True,
+             notify: bool = True) -> Transition:
+    """AFTER COMMIT. Best-effort announcements for a demotion that has already
+    been persisted. Never raises: a transition that happened must not be
+    reported as failed because Slack was unreachable."""
+    if t.verdict.status != "flaky":
+        return t
+
+    if file_issue:
+        try:
+            t.issue_url = open_github_issue(t.experiment, t.verdict)
+        except Exception as exc:                                   # noqa: BLE001
+            t.errors.append(f"issue not filed: {type(exc).__name__}: {exc}")
+    if notify:
+        try:
+            t.notified = post_slack(t.experiment, t.verdict, t.epoch_opened)
+        except Exception as exc:                                   # noqa: BLE001
+            t.errors.append(f"slack notice not sent: {type(exc).__name__}: {exc}")
+    return t
+
+
+def link_issue(cur, t: Transition) -> None:
+    """Back-link the filed issue onto the recorded transition. Runs in its own
+    transaction, after the demotion is already durable, so a failure here can
+    only cost a hyperlink — never the demotion itself."""
+    if not t.issue_url:
+        return
+    # max(f.id), not max(id): `id` is ambiguous across the join.
+    cur.execute("""UPDATE flakiness_transitions SET issue_url = %s
+                    WHERE id = (SELECT max(f.id)
+                                  FROM flakiness_transitions f
+                                  JOIN experiment_types et
+                                    ON et.id = f.experiment_type_id
+                                 WHERE et.name = %s)""",
+                (t.issue_url, t.experiment))
 
 
 def _record_transition(cur, experiment: str, verdict: FlakinessVerdict,
@@ -196,11 +223,29 @@ def issue_body(experiment: str, verdict: FlakinessVerdict) -> str:
     return "\n".join(lines)
 
 
+def _gh_available() -> bool:
+    """Is there a usable GitHub credential?
+
+    Two sources, because the two environments differ: CI exports GITHUB_TOKEN,
+    while a developer's machine usually has `gh` logged in through a keyring
+    with no token in the environment at all. Checking only the env var made
+    this a silent no-op locally — the quarantine would report success having
+    filed nothing.
+    """
+    if os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN"):
+        return True
+    try:
+        return subprocess.run(["gh", "auth", "status"], capture_output=True,
+                              text=True, timeout=30).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def open_github_issue(experiment: str, verdict: FlakinessVerdict) -> str | None:
     """Best-effort `gh issue create`. Returns the URL, or None when no GitHub
-    credential is available — a missing token is a no-op, never an error, so a
-    laptop run behaves the same as CI minus the announcement."""
-    if not (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")):
+    credential is available — a missing credential is a no-op, never an error,
+    so a laptop run behaves the same as CI minus the announcement."""
+    if not _gh_available():
         return None
 
     title = f"Flaky experiment: {experiment} demoted to advisory"
@@ -272,7 +317,7 @@ def quarantine_blocks(experiment: str, verdict: FlakinessVerdict,
                                "over a different set of experiments, and the trend line "
                                "breaks here rather than spanning it."
                                if epoch_sha else
-                               "Gating status unchanged; no new epoch."}},
+                               "Gating status unchanged; no new epoch."}]},
     ]
 
 

@@ -136,23 +136,41 @@ def trends(days: int = 30):
             (days,))
         rows = cur.fetchall()
 
+    return segment_by_epoch(rows)
+
+
+def segment_by_epoch(rows: list[dict]) -> dict:
+    """Split a chronological run list into per-epoch segments.
+
+    SEGMENTATION IS BY CONTIGUITY, NOT BY EPOCH IDENTITY, and the difference is
+    not hypothetical. Epochs are content-addressed, so a configuration that is
+    reverted returns to its EARLIER hash: quarantining the only gating
+    experiment takes the gating set back to empty, which is an epoch that
+    already exists. GATE 8 produced exactly that — epoch 11, then 23, then 11
+    again. Grouping by epoch id would join the two epoch-11 stretches into one
+    line drawn straight across the epoch-23 boundary, which is the single thing
+    the trend chart must never do.
+
+    Extracted from the route handler so it can be tested without a database.
+    """
     segments: list[dict] = []
     excluded: list[dict] = []
     for r in rows:
-        at = (r["finished_at"] or r["started_at"]).isoformat()
+        at = (r["finished_at"] or r["started_at"])
+        at = at.isoformat() if hasattr(at, "isoformat") else at
         if r["verdict"] not in SCOREABLE or r["score"] is None:
             excluded.append({"executionId": r["id"], "at": at,
                              "verdict": r["verdict"]})
             continue
         eid = r["scoring_epoch_id"]
+        # `segments[-1]` — the PREVIOUS segment, not any earlier one.
         if not segments or segments[-1]["epochId"] != eid:
             segments.append({"epochId": eid, "epochSha": r["epoch_sha256"],
                              "changeReason": r["change_reason"], "points": []})
         segments[-1]["points"].append({
             "executionId": r["id"], "at": at, "score": float(r["score"]),
             "epochId": eid,
-            # Retro-scoring lands in Phase 8; until then nothing is re-derived.
-            "retroScored": False,
+            "retroScored": bool(r.get("retro_scored")),
         })
 
     boundaries = [

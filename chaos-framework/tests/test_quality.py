@@ -255,3 +255,102 @@ def test_poisoning_does_not_mutate_the_original_checks():
     checks = [Check(t, t, True, "pass", 1.0) for t in scorer.WEIGHTS]
     scorer.checks_for_verdict(checks, "invalid")
     assert all(c.outcome == "pass" for c in checks)
+
+
+# --------------------------------------------------------------------------- #
+# The quarantine transition. Its side-effecting half needs a database, but its
+# message-building half does not — and a SyntaxError in this module was missed
+# entirely because nothing in the suite imported it. Importing is the floor.
+# --------------------------------------------------------------------------- #
+
+def test_the_quarantine_module_imports():
+    from src.quality import quarantine
+    assert quarantine.ISSUE_LABEL == "flaky-experiment"
+
+
+def test_the_issue_is_filed_against_the_experiment_and_says_what_to_check():
+    """A flaky experiment is a bug in the EXPERIMENT until proven otherwise, and
+    the issue has to say so — otherwise it gets triaged to the service team who
+    correctly observe that nothing is wrong with the service."""
+    from src.quality import quarantine
+    v = F.evaluate("swingy", runs([0.2 if i % 2 else 0.95
+                                   for i in range(FLAKINESS_WINDOW)]))
+    body = quarantine.issue_body("swingy", v)
+    assert "demoted to **advisory**" in body
+    assert "has NOT been disabled" in body
+    assert "bug in the **experiment**" in body
+    # The one forbidden fix must be named explicitly.
+    assert "Do not fix this by widening the tolerance" in body
+    assert f"{v.sigma:.4f}" in body
+
+
+def test_the_slack_notice_names_sigma():
+    """A demotion without a number is a rumour."""
+    from src.quality import quarantine
+    v = F.evaluate("swingy", runs([0.2 if i % 2 else 0.95
+                                   for i in range(FLAKINESS_WINDOW)]))
+    blocks = quarantine.quarantine_blocks("swingy", v, "a" * 64)
+    text = str(blocks)
+    assert f"{v.sigma:.4f}" in text
+    assert "aaaaaaaaaaaa" in text          # the new epoch, short form
+    assert "cannot block a merge" in text
+
+
+def test_the_slack_notice_is_honest_when_no_epoch_opened():
+    from src.quality import quarantine
+    v = F.evaluate("swingy", runs([0.2 if i % 2 else 0.95
+                                   for i in range(FLAKINESS_WINDOW)]))
+    text = str(quarantine.quarantine_blocks("swingy", v, None))
+    assert "Gating status unchanged; no new epoch." in text
+
+
+# --------------------------------------------------------------------------- #
+# Trend segmentation. GATE 8 produced a real epoch sequence of 11 -> 23 -> 11,
+# because epochs are content-addressed and quarantining the only gating
+# experiment returns the gating set to empty — an epoch that already existed.
+# --------------------------------------------------------------------------- #
+
+def _row(i, epoch_id, score=0.9, verdict="held"):
+    return {"id": i, "score": score, "verdict": verdict,
+            "finished_at": f"2026-08-30T00:00:{i:02d}", "started_at": None,
+            "scoring_epoch_id": epoch_id, "epoch_sha256": f"{epoch_id:064d}",
+            "change_reason": f"epoch {epoch_id}"}
+
+
+def test_a_reverted_epoch_does_not_rejoin_its_earlier_segment():
+    """The trap: grouping by epoch IDENTITY would merge the two epoch-11
+    stretches into one line drawn straight across the epoch-23 boundary."""
+    from src.api import segment_by_epoch
+    rows = [_row(1, 11), _row(2, 11), _row(3, 23), _row(4, 11), _row(5, 11)]
+    out = segment_by_epoch(rows)
+    assert [s["epochId"] for s in out["segments"]] == [11, 23, 11]
+    assert [len(s["points"]) for s in out["segments"]] == [2, 1, 2]
+
+
+def test_every_epoch_change_produces_a_labelled_boundary():
+    from src.api import segment_by_epoch
+    out = segment_by_epoch([_row(1, 11), _row(2, 23), _row(3, 11)])
+    assert len(out["boundaries"]) == 2
+    assert all(b["changeReason"] for b in out["boundaries"])
+
+
+def test_unscoreable_runs_are_excluded_not_plotted_as_zero():
+    """INVALID must never appear on the trend as a zero — it would read as a
+    catastrophic run when in fact nothing was measured."""
+    from src.api import segment_by_epoch
+    rows = [_row(1, 11), _row(2, 11, score=None, verdict="invalid"),
+            _row(3, 11, score=None, verdict="aborted")]
+    out = segment_by_epoch(rows)
+    assert len(out["segments"]) == 1
+    assert len(out["segments"][0]["points"]) == 1
+    assert {e["verdict"] for e in out["excluded"]} == {"invalid", "aborted"}
+
+
+def test_an_unscoreable_run_does_not_split_a_segment():
+    """An INVALID run between two scored runs is excluded from the line, but it
+    must not fragment the epoch into two segments — the epoch never changed."""
+    from src.api import segment_by_epoch
+    rows = [_row(1, 11), _row(2, 11, score=None, verdict="invalid"), _row(3, 11)]
+    out = segment_by_epoch(rows)
+    assert len(out["segments"]) == 1
+    assert len(out["segments"][0]["points"]) == 2
