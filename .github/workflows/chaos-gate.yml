@@ -284,6 +284,7 @@ jobs:
           done
 
       - name: kind cluster
+        id: cluster
         uses: helm/kind-action@v1
         with:
           version: ${{ env.KIND_VERSION }}
@@ -371,7 +372,7 @@ jobs:
 
       # A flaky chaos test that cannot be debugged gets disabled within a week.
       - name: Cluster dump on failure
-        if: failure()
+        if: failure() && steps.cluster.outcome == 'success'
         run: |
           mkdir -p /tmp/dump
           kubectl cluster-info dump --all-namespaces --output-directory=/tmp/dump || true
@@ -385,7 +386,7 @@ jobs:
             > /tmp/dump/executions.csv 2>&1 || true
 
       - name: Upload cluster dump
-        if: failure()
+        if: failure() && steps.cluster.outcome == 'success'
         uses: actions/upload-artifact@v5
         with:
           name: chaos-gate-dump-${{ github.run_id }}
@@ -393,8 +394,10 @@ jobs:
           retention-days: 7
 
       # Cleanup is not optional, and it does not depend on the happy path.
+      # always() so a crashed runner still tears the generator down — but only
+      # when a cluster exists to tear it down in.
       - name: Stop the load plane
-        if: always()
+        if: always() && steps.cluster.outcome == 'success'
         run: kubectl delete testrun ci-120rps -n load --ignore-not-found
 
   # ==========================================================================

@@ -169,13 +169,13 @@ def test_a_failed_chaos_gate_dumps_the_cluster(chaos_gate):
     """A flaky chaos test that cannot be debugged gets disabled within a week,
     and then the gate protects nothing."""
     dump = [s for s in chaos_gate["steps"] if "cluster-info dump" in s.get("run", "")]
-    assert dump and dump[0]["if"] == "failure()"
+    assert dump and "failure()" in dump[0]["if"]
 
 
 def test_the_load_plane_is_torn_down_on_every_exit_path(chaos_gate):
     """Cleanup never depends only on the happy path."""
     stop = [s for s in chaos_gate["steps"] if "delete testrun" in s.get("run", "")]
-    assert stop and stop[0]["if"] == "always()"
+    assert stop and "always()" in stop[0]["if"]
 
 
 def test_signing_never_happens_from_a_pull_request(workflow):
@@ -390,3 +390,22 @@ def test_no_action_targets_the_deprecated_node_20_runtime(workflow):
     for job in workflow["jobs"].values():
         for step in job["steps"]:
             assert step.get("uses") not in deprecated, f"{step.get('uses')} is Node 20"
+
+
+def test_cleanup_is_gated_on_a_cluster_existing(chaos_gate):
+    """Cleanup runs on every exit path THAT HAS A CLUSTER. With none — the
+    capacity pre-flight aborting, say — `kubectl delete` hits localhost:8080 and
+    fails with a connection-refused stack that reads like a real fault. Cleanup
+    that cannot tell 'nothing to clean' from 'cleanup failed' trains people to
+    ignore it."""
+    for step in chaos_gate["steps"]:
+        cond = str(step.get("if", ""))
+        if "always()" in cond or "failure()" in cond:
+            assert "steps.cluster.outcome" in cond, (
+                f"step {step.get('name')!r} runs on abort paths without checking "
+                "that a cluster was ever created")
+
+
+def test_the_load_plane_teardown_still_runs_on_every_exit_path(chaos_gate):
+    stop = next(s for s in chaos_gate["steps"] if "delete testrun" in s.get("run", ""))
+    assert "always()" in stop["if"]
