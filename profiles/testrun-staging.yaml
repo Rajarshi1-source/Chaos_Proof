@@ -51,5 +51,8 @@ spec:
       - name: K6_PROMETHEUS_RW_PUSH_INTERVAL
         value: 5s
     resources:
-      requests: { memory: 256Mi, cpu: 250m }
-      limits: { memory: 512Mi }
+      # Raised with preAllocatedVUs 400 -> 700 (defect D-F): a generator OOMed
+      # mid-run is the same finding as a generator that drops iterations, and
+      # it arrives as INVALID for a fault that was measuring something real.
+      requests: { memory: 512Mi, cpu: 250m }
+      limits: { memory: 1Gi }
