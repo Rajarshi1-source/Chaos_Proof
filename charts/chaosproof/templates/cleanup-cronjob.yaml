@@ -10,15 +10,16 @@
 #
 # Alert on chaosproof_orphaned_cleanups_total > 0: an orphan is not routine
 # housekeeping, it means a runner died and the framework noticed after the fact.
+{{- if .Values.cleanupCronJob.enabled }}
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: chaos-cleanup
-  namespace: chaosproof
+  namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/component: safety-plane
 spec:
-  schedule: "*/5 * * * *"
+  schedule: {{ .Values.cleanupCronJob.schedule | quote }}
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -28,18 +29,19 @@ spec:
       template:
         spec:
           restartPolicy: OnFailure
-          serviceAccountName: chaosproof-runner
+          serviceAccountName: {{ .Values.serviceAccount.name }}
           containers:
             - name: cleanup
-              image: chaosproof-framework:dev
-              imagePullPolicy: IfNotPresent
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
               command: ["python", "-m", "src.cleanup_sweeper"]
               env:
                 - name: CHAOSPROOF_DB
                   valueFrom:
                     secretKeyRef:
-                      name: chaosproof-db
-                      key: dsn
+                      name: {{ .Values.db.secretName }}
+                      key: {{ .Values.db.secretKey }}
               resources:
                 limits: { memory: 256Mi, cpu: 200m }
                 requests: { memory: 128Mi, cpu: 50m }
+{{- end }}

@@ -1,0 +1,191 @@
+# RBAC, justified verb by verb.
+#
+# THE INTERVIEW ANSWER, stated as configuration: the one mutating permission
+# this framework holds on the target is `deployments/scale`, and it exists so
+# the cleanup saga can put replica counts back the way it found them.
+# Everything destructive is done by Litmus's own service account, inside the
+# experiment, scoped per-experiment and gone with it. ChaosProof observes and
+# cleans up; the fault injector is the thing with teeth, and it is a CNCF
+# project I did not write.
+#
+# DELIBERATELY ABSENT — check for these before adding anything:
+#   * no `delete` on deployments, statefulsets, or PVCs
+#   * no `secrets` outside this framework's own namespace
+#   * no write on rbac.authorization.k8s.io (no privilege escalation path)
+#   * no wildcards in apiGroups, resources, or verbs
+#   * no cluster-admin, and no ClusterRoleBinding to a built-in role
+#   * no `create`/`patch` on pods — a framework that can start a pod in the
+#     target namespace can run anything it likes there
+#
+# SCOPE: Roles namespaced per target namespace, not a ClusterRole. The
+# framework is permitted in `target-app` and `chaos-staging` and nowhere else;
+# `kube-system` is not reachable by a permission bug, only by an edit to
+# values.yaml that a reviewer sees.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.serviceAccount.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: chaosproof
+    app.kubernetes.io/component: framework
+automountServiceAccountToken: true
+
+{{- range $ns := .Values.targetNamespaces }}
+---
+# ---------------------------------------------------------------------------
+# Target namespace: {{ $ns }}
+# ---------------------------------------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: chaosproof-runner
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: chaosproof
+rules:
+  # Litmus CRDs. `create` applies the ChaosEngine; `delete` removes it, which is
+  # how the cleanup saga stops a fault. `watch` is required for `--wait`-style
+  # waits and for the runner to see a ChaosResult land rather than poll blind.
+  - apiGroups: ["litmuschaos.io"]
+    resources: ["chaosengines", "chaosexperiments", "chaosresults"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+
+  # The load plane. The framework must be able to confirm the TestRun exists and
+  # is running BEFORE it injects — a chaos run with no load plane is the defect
+  # this whole project exists to have caught. `create`/`delete` so a per-
+  # experiment profile can be raised and torn down; no `patch`, because
+  # mutating a running load generator mid-experiment would change the
+  # measurement conditions underneath the hypothesis.
+  - apiGroups: ["k6.io"]
+    resources: ["testruns"]
+    verbs: ["get", "list", "create", "delete"]
+
+  # Read-only observation. `pods/log` is how a falsified verdict can name what
+  # the application said while it was failing. No `create`, no `delete`,
+  # no `exec` — killing pods is Litmus's job, not the framework's.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events"]
+    verbs: ["get", "list", "watch"]
+
+  # Endpoint convergence is what several hypotheses actually assert (a killed
+  # replica leaving and rejoining the Service), so the framework has to be able
+  # to see it. Read-only.
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+
+  # THE ONLY MUTATING VERB ON THE TARGET.
+  # `patch` on deployments/scale, held so cleanup can restore a replica count.
+  # Note what is not here: no `delete` (Litmus deletes pods, per experiment,
+  # with its own scoped SA), no `update` on the deployment itself (which would
+  # let the framework change images, env, or probes).
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "list", "watch", "patch"]
+
+  # The CPU-spike hypothesis is only meaningful if an HPA owns the target — the
+  # spike does not disappear, the aggregate SLI holds because the autoscaler
+  # adds healthy replicas while the hogged pod stays hogged. Read-only: the
+  # framework needs to know an HPA exists, never to change it.
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list"]
+
+  # Serial execution, fenced. Two overlapping experiments make every result
+  # unattributable, which invalidates the dataset rather than one run.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+
+  # The counterfactual flag plane lives on a ConfigMap on the CONSUMER service
+  # (order-api), which is not the fault target. Restricted to chaos-staging by
+  # the policy file; the RBAC is granted in both namespaces so a policy denial
+  # is what refuses a counterfactual outside staging — a refusal with a readable
+  # reason, rather than an opaque 403 from the API server.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: chaosproof-runner
+  namespace: {{ $ns }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $.Values.serviceAccount.name }}
+    namespace: {{ $.Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: chaosproof-runner
+{{- end }}
+---
+# ---------------------------------------------------------------------------
+# Own namespace. The DSN secret is readable HERE and only here, by name.
+# ---------------------------------------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: chaosproof-own-namespace
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ .Values.db.secretName | quote }}]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]      # the cleanup CronJob's own children
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: chaosproof-own-namespace
+  namespace: {{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: chaosproof-own-namespace
+---
+# ---------------------------------------------------------------------------
+# The single cluster-scoped grant, and why it is not avoidable.
+#
+# Blast-radius computation asks "how many namespaces does this fault touch?"
+# and the abort condition `unrelated_namespace_impact` asserts that the answer
+# stays 1. Both need to be able to LIST namespaces. `get`/`list`/`watch` only —
+# there is no verb here that changes anything, anywhere.
+# ---------------------------------------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: chaosproof-namespace-reader
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: chaosproof-namespace-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: chaosproof-namespace-reader

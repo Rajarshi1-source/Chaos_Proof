@@ -1,0 +1,56 @@
+# ChaosProof framework chart values.
+#
+# No `:latest` anywhere, here or in any sub-value. A resilience project that
+# ships a floating tag cannot reproduce its own results, and that is the first
+# thing a sharp reviewer checks.
+
+image:
+  repository: chaosproof-framework
+  # CI overrides this with the git SHA it just built and signed:
+  #   helm upgrade --install chaosproof charts/chaosproof --set image.tag=$GITHUB_SHA
+  tag: "dev"
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  name: chaosproof-runner
+
+# The namespaces this framework is permitted to observe and clean up in.
+# `chaosproof` is deliberately NOT here — it carries chaosproof.io/chaos:
+# disabled and the policy file denies any experiment targeting it. The
+# framework does not get RBAC over its own namespace's workloads either;
+# killing the pod holding an experiment's state loses the experiment.
+targetNamespaces:
+  - target-app
+  - chaos-staging
+
+replicaCount: 1
+
+# Long, deliberately. On SIGTERM the runner stops consuming the queue and
+# finishes the in-flight experiment INCLUDING its cleanup saga, then releases
+# the Lease. A 60s grace period would routinely orphan faults — the CronJob
+# would find them minutes later, which is a recovery, not a design.
+terminationGracePeriodSeconds: 900
+
+resources:
+  requests: { memory: 256Mi, cpu: 100m }
+  limits: { memory: 512Mi, cpu: 500m }
+
+env:
+  PROM_URL: http://kps-kube-prometheus-stack-prometheus.monitoring:9090
+  ALERTMANAGER_URL: http://kps-kube-prometheus-stack-alertmanager.monitoring:9093
+  TESTRUN: steady-120rps
+
+# The read-only HTTP surface (Phase 6). There is no trigger route to disable —
+# there is no trigger route at all.
+api:
+  port: 8000
+
+db:
+  # DSN lives in a Secret, never in values. The framework's RBAC grants
+  # `secrets` reads only inside its OWN namespace.
+  secretName: chaosproof-db
+  secretKey: dsn
+
+cleanupCronJob:
+  enabled: true
+  schedule: "*/5 * * * *"

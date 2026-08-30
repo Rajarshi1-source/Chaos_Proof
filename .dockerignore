@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.git/
+dashboard/node_modules/
+dashboard/.next/
+backups/
+target-app/*/target/
+.pytest_cache/
+.coverage
+htmlcov/

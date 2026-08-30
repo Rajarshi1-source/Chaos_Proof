@@ -18,3 +18,8 @@ backups/
 # Next.js dashboard build output
 dashboard/.next/
 dashboard/node_modules/
+
+# pytest / coverage
+.coverage
+.pytest_cache/
+htmlcov/

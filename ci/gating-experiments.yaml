@@ -1,0 +1,58 @@
+# Which experiments may BLOCK A MERGE.
+#
+# §21.5 note 5: "the chaos gate only blocks on experiments that have earned
+# gating status through flakiness characterisation." Two promotion pipelines,
+# deliberately separate — software promotes by `git push -> CI -> Helm`; an
+# experiment's authority to block a merge promotes through characterisation.
+# Shipping a new framework version never silently grants an experiment gating
+# power, which is why that authority is declared here and not inferred from
+# "this experiment exists".
+#
+# AUTHORITY MODEL — one-way, deliberately:
+#   * This file DECLARES gating intent, with the evidence that earned it.
+#   * The evidence store's `experiment_flakiness` table may DEMOTE an entry to
+#     advisory (Phase 8's automatic quarantine). It may never promote one.
+#   * So a flaky experiment loses its authority to block without anyone editing
+#     a file, and no experiment gains that authority without review.
+#
+# THE UNCHARACTERISED-BOOTSTRAP EXCEPTION, stated out loud rather than hidden:
+# the standing rule is that an experiment gates only after FLAKINESS_WINDOW (20)
+# clean runs on an unchanged git_sha. Phase 8 is what measures that. Until then
+# an experiment can only reach gating status through `bootstrap: true`, which
+# ci_runner prints in EVERY CI summary as "GATING (bootstrap, uncharacterised —
+# n/20)". The exception is therefore visible on every single run rather than
+# being a quiet default, and it disappears on its own the moment real flakiness
+# data exists: measured status always wins, and it can only ever demote.
+version: 1
+min_clean_runs: 20          # = constants.FLAKINESS_WINDOW
+
+experiments:
+  - name: network_partition_payment
+    gating: true
+    bootstrap: true
+    clean_runs: 3
+    since: "2026-08-26"
+    reason: >-
+      The project's headline assertion: order-api's circuit breaker opens under
+      a full partition and the queued fallback keeps checkout available. This is
+      the experiment GATE 7 falsifies by removing @CircuitBreaker — the pattern
+      whose removal must not be mergeable.
+
+  - name: pod_kill_payment_svc
+    gating: true
+    bootstrap: true
+    clean_runs: 4
+    since: "2026-08-26"
+    reason: >-
+      Cheapest fault carrying a real recovery invariant (replicas_restored
+      within 120s), and fast enough to belong in a per-PR gate.
+
+# Advisory in CI regardless of characterisation:
+#   * partition_no_fallback  — counterfactual, chaos-staging only by policy.
+#   * disk_fill_inventory    — needs ephemeral-storage pressure a CI node cannot
+#                              supply honestly; it would produce INVALID, not insight.
+#   * cpu_spike_payment      — needs an HPA plus metrics-server headroom; on a
+#                              CI runner the throttle ratio measures the runner.
+#   * container_kill_payment / network_latency_payment — fine in CI, not yet
+#                              characterised; running them advisory is how they
+#                              accumulate the clean runs that earn gating status.

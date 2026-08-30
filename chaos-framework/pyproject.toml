@@ -1,10 +1,44 @@
 [project]
 name = "chaosproof-framework"
-version = "0.2.0"
-description = "ChaosProof validation framework - load plane, validity gate, sampler (Phase 2)"
+version = "0.7.0"
+description = "ChaosProof validation framework - load plane, safety plane, scorer, CI gate"
 requires-python = ">=3.14"
 dependencies = [
     "requests>=2.32",
     "psycopg[binary]>=3.2",
     "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# The `unit` CI job installs this and nothing else: it must run without a
+# cluster, a database, or a network. A gate a developer cannot fail cheaply on
+# their laptop is a gate they will learn to ignore.
+test = [
+    "pytest>=8.4",
+    "pytest-cov>=7.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `-m "not chaos"` is what the CI `unit` job selects on, so the marker has to be
+# declared or pytest warns and the selection silently matches nothing.
+markers = [
+    "chaos: requires a live cluster, a load plane, and real fault injection",
+]
+addopts = "-q --strict-markers"
+
+[tool.coverage.run]
+branch = true
+omit = ["tests/*"]
+
+[tool.coverage.report]
+# The scorer is graded at 80% by its own CI step (`--cov=src/scoring`). It is
+# the one component whose bugs are invisible: a wrong number looks exactly like
+# a right number, so nothing downstream — not the dashboard, not Slack, not a
+# reviewer reading a trend line — can tell you it is wrong. Everything else in
+# the framework fails loudly when it breaks.
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
 ]

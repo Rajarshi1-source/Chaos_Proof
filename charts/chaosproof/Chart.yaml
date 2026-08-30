@@ -1,0 +1,9 @@
+apiVersion: v2
+name: chaosproof
+description: The ChaosProof framework — orchestrator, safety plane, evidence writer, read API
+type: application
+version: 0.7.0          # chart version; Phase 7
+appVersion: "0.7.0"
+kubeVersion: ">=1.35.0-0"   # 1.35 is the cgroup v2 floor: throttle-ratio and PSI
+                            # are only trustworthy above it, and this project
+                            # scores on those signals

@@ -1,0 +1,117 @@
+# The DEPLOYER identity — separate from the framework's own service account,
+# and applied before `helm upgrade --install`, because the chart cannot grant
+# the permissions needed to install the chart.
+#
+# HELM 4 GOTCHA, and the reason this file exists as its own manifest:
+# `--wait` needs the `watch` verb on every kind the release creates. Under
+# Helm 3 a role with get/list was usually enough to limp through; under Helm 4
+# the wait blocks and then times out, and the failure surfaces as "context
+# deadline exceeded" with no mention of RBAC. It breaks CI silently on upgrade.
+# So `watch` is present on every resource kind this chart ships, deliberately
+# and with this comment attached.
+#
+# Helm 4 also defaults to SERVER-SIDE APPLY for new installs. That is a good
+# change — conflicting field ownership now produces an explicit error instead
+# of a silent overwrite — but it means the deployer needs `patch` on the kinds
+# it manages, not merely `update`.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: chaosproof-deployer
+  namespace: chaosproof
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: chaosproof-deployer
+  namespace: chaosproof
+rules:
+  # Helm's own release state (Helm 3+ stores releases as Secrets in the
+  # release namespace). Scoped to this namespace; this is the one place the
+  # deployer may touch secrets.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # The kinds charts/chaosproof actually ships. `watch` on every one of them is
+  # what makes `--wait` work rather than hang.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs", "jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "serviceaccounts", "configmaps", "pods"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # --atomic rolls back on failure, which means reading and deleting what the
+  # failed release created. Without this the rollback half-completes and leaves
+  # a release wedged in `pending-upgrade`.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: chaosproof-deployer
+  namespace: chaosproof
+subjects:
+  - kind: ServiceAccount
+    name: chaosproof-deployer
+    namespace: chaosproof
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: chaosproof-deployer
+---
+# The deployer creates the framework's RBAC, so it needs rbac write — and that
+# is a privilege-escalation path unless it is bounded. Two bounds, both
+# deliberate:
+#
+#   1. `resourceNames` pins it to exactly the objects charts/chaosproof ships.
+#      The deployer cannot mint an arbitrary role.
+#   2. Kubernetes' own escalation check still applies: a subject may only grant
+#      permissions it already holds, or hold the `escalate` verb. `escalate` is
+#      NOT granted here, so the deployer can never create a role more powerful
+#      than itself. That check is the real guardrail; resourceNames is defence
+#      in depth.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: chaosproof-deployer-rbac
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    resourceNames: ["chaosproof-runner", "chaosproof-own-namespace"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles", "clusterrolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    resourceNames: ["chaosproof-namespace-reader"]
+  # `create` cannot carry resourceNames (the name is not known until the
+  # request body is read), so it is granted separately and bounded by the
+  # escalation check above.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    verbs: ["create"]
+  # Reading namespaces is needed so `--wait` can resolve the release namespace
+  # and so the runner's ClusterRoleBinding can be verified after apply.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: chaosproof-deployer-rbac
+subjects:
+  - kind: ServiceAccount
+    name: chaosproof-deployer
+    namespace: chaosproof
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: chaosproof-deployer-rbac

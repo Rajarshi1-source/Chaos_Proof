@@ -14,7 +14,7 @@ EVIDENCE_PORT    := 5433
 POSTGRES_IMAGE   := postgres:18.6-alpine
 SERVICES         := order-api payment-service inventory-service
 
-.PHONY: bootstrap kind-up evidence-up evidence-backup target-app load load-stop experiment score dashboard kind-down
+.PHONY: bootstrap kind-up evidence-up evidence-backup target-app load load-stop experiment score unit ci-gate dashboard kind-down
 
 bootstrap:      ## Everything from nothing: cluster + platform + evidence store + app + load
 	$(MAKE) kind-up
@@ -61,6 +61,21 @@ evidence-backup: ## pg_dump the evidence store. Losing it costs the whole resili
 
 score:          ## GATE 4 - hermetic re-scoring of the SS4 worked example
 	python -m evals.scoring_worked_example
+
+# The CI `unit` job, verbatim. Runs in seconds with no cluster and no database:
+# a developer must be able to fail cheaply before waiting on the chaos gate.
+# --cov-fail-under=80 is scoped to the SCORER, and to nothing else - it is the
+# one component whose bugs are invisible, because a wrong number looks exactly
+# like a right number.
+unit:           ## The CI unit gate: pytest + the scorer's 80% coverage floor
+	cd chaos-framework && python -m pytest -m "not chaos" --cov=src --cov-report=term-missing
+	cd chaos-framework && python -m pytest -m "not chaos" --cov=src/scoring --cov-fail-under=80
+
+# The CI chaos gate against the LOCAL cluster. `make load` first, always -
+# ci_runner refuses to inject into a cluster with no load plane, which is the
+# whole reason the gate is worth anything.
+ci-gate:        ## GATE 7 - the CI chaos gate, run locally (needs: make load)
+	cd chaos-framework && TESTRUN=$${TESTRUN:-steady-120rps} python -m src.orchestrator.ci_runner --experiments network_partition_payment,pod_kill_payment_svc --override
 
 target-app:     ## Build + load the three Spring Boot 4 service images, deploy the chart
 	for s in $(SERVICES); do \

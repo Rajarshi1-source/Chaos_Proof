@@ -1,0 +1,451 @@
+# ChaosProof CI — the §21.5 job shape.
+#
+#   unit -> replay-eval -> contract-gate -> chaos-gate -> build-sign-deploy
+#
+# THE ONE LINE THAT MATTERS is in `chaos-gate`:
+#
+#     kubectl apply -f k6/testrun-ci.yaml     # LOAD FIRST
+#
+# It runs before `ci_runner`, and it is the single most important line in this
+# file. A chaos gate with no load plane injects faults into an idle system:
+# every invariant reads an empty series, nothing can be falsified, the job goes
+# green and the badge says the resilience gate passed. That is the project's
+# original defect reproduced *inside the pipeline*, which is the hardest place
+# to notice it. `ci_runner` re-asserts the load plane in Python before it
+# injects anything, so deleting the line above fails loudly rather than
+# quietly — but the ordering is stated here too, because the ordering is the
+# design.
+#
+# The first three jobs are hermetic and finish in seconds: no cluster, no
+# database, no network. A developer must be able to fail cheaply before waiting
+# on a kind cluster, or they learn to stop reading CI.
+#
+# ACTION PINNING: major tags below. SHA-pinning every action is stricter and is
+# the right end state for a repo that signs its artifacts; it is called out
+# here rather than silently skipped. Chart versions and container images ARE
+# pinned exactly, because those are what the experiments run against.
+
+name: chaos-gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two chaos gates against two kind clusters is fine; two against the shared
+  # staging namespace is not. Cancelling superseded PR runs also stops a stale
+  # commit from holding a cluster for 30 minutes.
+  group: chaos-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+  # Pins resolved 23 Aug 2026, matching the Makefile exactly. CI running a
+  # different Kubernetes patch than `make kind-up` is how "works on my cluster"
+  # gets into a resilience project.
+  KIND_NODE: kindest/node:v1.36.1
+  KPS_CHART_VER: "88.5.3"
+  # Never `3.x`. Litmus ships monthly, and two minors are load-bearing here:
+  # 3.28.0 fixed a stale config leak across multiple probes of the same type
+  # (the safety plane uses several promProbes per experiment), and 3.29.0 fixed
+  # duplicate experiment triggers under concurrent reconciles (serial execution
+  # is this project's core scaling decision — before that fix it partly
+  # depended on luck). 3.31.0 is what was current at install.
+  LITMUS_CHART_VER: "3.31.0"
+  K6OP_CHART_VER: "4.6.0"
+  METRICS_SERVER_VER: v0.8.0
+  POSTGRES_IMAGE: postgres:18.6-alpine
+
+jobs:
+  # ==========================================================================
+  # 1. unit — pure logic. No cluster, no database, no network.
+  # ==========================================================================
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install framework + test extras
+        working-directory: chaos-framework
+        run: pip install -e ".[test]"
+
+      - name: Whole framework (reported, not gated)
+        working-directory: chaos-framework
+        run: pytest -m "not chaos" --cov=src --cov-report=term-missing
+
+      # --cov-fail-under=80 ON THE SCORER SPECIFICALLY, and on nothing else.
+      #
+      # The scorer is the one component whose bugs are invisible: a wrong number
+      # looks exactly like a right number. The dashboard renders it, Slack posts
+      # it, the trend line absorbs it, and no consumer downstream can tell.
+      # Everything else in this framework fails loudly when it breaks — a broken
+      # sampler produces empty series and INVALID, a broken safety plane refuses
+      # to inject. So the coverage floor goes where silent wrongness is possible.
+      - name: Scorer coverage floor (80%)
+        working-directory: chaos-framework
+        run: pytest -m "not chaos" --cov=src/scoring --cov-report=term-missing --cov-fail-under=80
+
+  # ==========================================================================
+  # 2. replay-eval — hermetic, seconds, catches every fixed defect.
+  # ==========================================================================
+  replay-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e "./chaos-framework[test]" celpy
+
+      # Every safety rule carries a must-allow and a must-deny case, and each
+      # rule must be the one that FIRES on its own must-deny case — which is how
+      # a shadowed guardrail (a rule a broader rule silently pre-empts) is
+      # caught. The policy file is code, so it gets tested.
+      - name: Policy eval — every safety rule, both directions
+        run: python -m evals.policy_eval
+
+      - name: Scoring worked example — renormalisation, hermetic
+        run: python -m evals.scoring_worked_example
+
+      # The remaining two evals land with Phase 8 (§21.2 replay corpus and
+      # determinism digest; §16.5 alert-rule arithmetic). The steps exist now
+      # with the job shape and turn themselves on when the modules appear —
+      # loudly, so an absent gate is never mistaken for a passing one.
+      - name: Replay eval — corpus + determinism digest
+        run: |
+          if [ -f evals/replay_eval.py ]; then
+            python -m evals.replay_eval
+          else
+            echo "::warning title=replay-eval::evals/replay_eval.py is not present yet (Phase 8). The replay corpus is NOT gating this PR."
+          fi
+
+      - name: Alert-rule lint — impossible-SLO arithmetic
+        run: |
+          if [ -f evals/alert_rule_lint.py ]; then
+            python -m evals.alert_rule_lint
+          else
+            echo "::warning title=alert-rule-lint::evals/alert_rule_lint.py is not present yet (Phase 8). Alert rules are NOT linted on this PR."
+          fi
+
+  # ==========================================================================
+  # 3. contract-gate — surfaces weakened guarantees for review.
+  #
+  # This job DELIBERATELY DOES NOT BLOCK. A weakened resilience contract is a
+  # conversation between the service's owners, and tooling that forces a
+  # conversation beats tooling that forces a merge failure — the second kind
+  # gets bypassed, and then nobody is having the conversation either.
+  # ==========================================================================
+  contract-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write        # the diff comments; it never sets a status
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0          # the diff needs the base branch
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e "./chaos-framework[test]"
+
+      - name: Resilience contract diff
+        working-directory: chaos-framework
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f src/contracts/diff.py ]; then
+            python -m src.contracts.diff --base "${{ github.base_ref || 'main' }}"
+          else
+            echo "::warning title=contract-gate::src/contracts/diff.py is not present yet (Phase 9). Contract weakenings are NOT being surfaced on this PR."
+          fi
+
+  # ==========================================================================
+  # 4. chaos-gate — the headline. Real kind cluster, real faults, REAL LOAD.
+  # ==========================================================================
+  chaos-gate:
+    runs-on: ubuntu-latest
+    # A t3.medium-shaped runner produces INVALID runs rather than insight: the
+    # load plane plus 5s scraping needs real headroom, and an experiment that
+    # fails because the NODE was starved has measured the runner, not the
+    # system. If `ci_runner` starts reporting LOAD_PLANE_ABSENT here, move this
+    # to a larger runner — never lower `min_rps_floor`.
+    timeout-minutes: 60
+    needs: [unit, replay-eval]
+    services:
+      # The evidence store. Every execution — including a refusal — is a row,
+      # and a run that cannot be recorded is a run that did not happen.
+      evidence:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_DB: chaosproof
+          POSTGRES_USER: chaosproof
+          POSTGRES_PASSWORD: chaosproof
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U chaosproof"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      CHAOSPROOF_DB: "host=127.0.0.1 port=5433 dbname=chaosproof user=chaosproof password=chaosproof"
+      PROM_URL: http://localhost:19090
+      ALERTMANAGER_URL: http://localhost:19093
+      TESTRUN: ci-120rps
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.2.0          # Helm 3 bug fixes ended 8 July 2026
+
+      - run: pip install -e "./chaos-framework[test]" celpy
+
+      - name: Evidence store schema
+        run: |
+          for m in migrations/*.sql; do
+            echo "applying $m"
+            PGPASSWORD=chaosproof psql -h 127.0.0.1 -p 5433 -U chaosproof -d chaosproof \
+              -v ON_ERROR_STOP=1 -q -f "$m"
+          done
+
+      - name: kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: chaosproof
+          node_image: ${{ env.KIND_NODE }}
+          wait: 180s
+
+      # kube-prometheus-stack with 5s scraping on the TARGET APP ONLY. Raising
+      # scrape frequency cluster-wide to fix one measurement multiplies load for
+      # no benefit; the ServiceMonitor in charts/target-app is what scopes it.
+      - name: Platform — Prometheus, Litmus, k6 Operator, metrics-server
+        run: |
+          kubectl create namespace monitoring
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo add litmuschaos https://litmuschaos.github.io/litmus-helm/
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo update
+          helm install kps prometheus-community/kube-prometheus-stack \
+            --version "$KPS_CHART_VER" --namespace monitoring \
+            -f monitoring/kps-values.yaml --wait --timeout 12m
+          kubectl create namespace litmus
+          helm install litmus litmuschaos/litmus-core \
+            --version "$LITMUS_CHART_VER" --namespace litmus --wait --timeout 8m
+          helm install k6-operator grafana/k6-operator \
+            --version "$K6OP_CHART_VER" --namespace k6-operator \
+            --create-namespace --wait --timeout 8m
+          kubectl apply -f "https://github.com/kubernetes-sigs/metrics-server/releases/download/${METRICS_SERVER_VER}/components.yaml"
+          kubectl patch deployment metrics-server -n kube-system --type=json \
+            -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+
+      - name: Litmus fault CRDs + per-experiment RBAC
+        run: |
+          kubectl create namespace target-app
+          for f in litmus-experiments/*-fault-3.31.yaml; do kubectl apply -f "$f" -n target-app; done
+          kubectl apply -f litmus-experiments/pod-delete-rbac.yaml
+
+      - name: Target app — build, load into kind, deploy
+        run: |
+          for s in order-api payment-service inventory-service; do
+            (cd "target-app/$s" && ./mvnw -q -B -DskipTests package && docker build -q -t "$s:dev" .)
+          done
+          kind load docker-image order-api:dev payment-service:dev inventory-service:dev \
+            --name chaosproof
+          # Chart defaults are 2 replicas per service. The plan's `--set
+          # replicas=3` predates the per-service `services[].replicas` shape;
+          # 2 is what the deny-single-replica policy rule requires and what
+          # every hypothesis is written against.
+          helm upgrade --install target-app charts/target-app \
+            --namespace target-app --wait --timeout 12m
+
+      - name: Port-forward Prometheus + Alertmanager
+        run: |
+          kubectl -n monitoring port-forward svc/kps-kube-prometheus-stack-prometheus 19090:9090 &
+          kubectl -n monitoring port-forward svc/kps-kube-prometheus-stack-alertmanager 19093:9093 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:19090/-/ready >/dev/null && break || sleep 2
+          done
+          curl -sf http://localhost:19090/-/ready
+
+      # ---------------------------------------------------------------------
+      # LOAD FIRST. Everything above this point is scaffolding; this is the
+      # line that decides whether the gate below means anything.
+      # ---------------------------------------------------------------------
+      - name: Load plane — k6 TestRun (MUST run before ci_runner)
+        run: |
+          kubectl create namespace load
+          kubectl create configmap ci-120rps -n load \
+            --from-file=archive.js=profiles/steady_120rps.js
+          kubectl apply -f k6/testrun-ci.yaml
+
+      - name: Chaos gate
+        working-directory: chaos-framework
+        # --override is an explicit, RECORDED decision, not a default. Both
+        # gating experiments exceed the blast-radius score of 60 that
+        # `require-override-large-radius` guards, and the thing being guarded —
+        # a shared cluster with users on it — does not exist here: this is an
+        # ephemeral kind cluster that is deleted at the end of the job. The
+        # override is written into the execution row either way, so the
+        # decision is auditable rather than assumed.
+        run: |
+          python -m src.orchestrator.ci_runner \
+            --experiments network_partition_payment,pod_kill_payment_svc \
+            --override
+
+      # A flaky chaos test that cannot be debugged gets disabled within a week.
+      - name: Cluster dump on failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/dump
+          kubectl cluster-info dump --all-namespaces --output-directory=/tmp/dump || true
+          kubectl get chaosengines,chaosresults -A -o yaml > /tmp/dump/chaos.yaml || true
+          kubectl get testruns -A -o yaml > /tmp/dump/testruns.yaml || true
+          kubectl -n load logs -l k6_cr=ci-120rps --tail=500 > /tmp/dump/k6.log 2>&1 || true
+          kubectl -n target-app logs -l app=order-api --tail=500 --prefix \
+            > /tmp/dump/order-api.log 2>&1 || true
+          PGPASSWORD=chaosproof psql -h 127.0.0.1 -p 5433 -U chaosproof -d chaosproof \
+            -c "\copy (SELECT * FROM experiment_executions ORDER BY id DESC LIMIT 20) TO STDOUT WITH CSV HEADER" \
+            > /tmp/dump/executions.csv 2>&1 || true
+
+      - name: Upload cluster dump
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-gate-dump-${{ github.run_id }}
+          path: /tmp/dump
+          retention-days: 7
+
+      # Cleanup is not optional, and it does not depend on the happy path.
+      - name: Stop the load plane
+        if: always()
+        run: kubectl delete testrun ci-120rps -n load --ignore-not-found
+
+  # ==========================================================================
+  # 5. build-sign-deploy — needs all four gates.
+  # ==========================================================================
+  build-sign-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [unit, replay-eval, contract-gate, chaos-gate]
+    # Never from a pull request. Signing an artifact built from an unmerged
+    # branch attests to something that is not on main, and a PR from a fork
+    # would be signing someone else's code with this repository's identity.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write             # cosign keyless — no key material to leak
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}/chaosproof
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # The git SHA, never `latest`. A resilience project that cannot say
+          # which build produced a result is not making a defensible claim.
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          provenance: true
+          sbom: true
+
+      - uses: sigstore/cosign-installer@v3
+
+      # Keyless: the signature is bound to this workflow's OIDC identity, so
+      # there is no signing key to scope, rotate, or leak. Signed by DIGEST —
+      # a tag is mutable and signing one attests to whatever it points at next.
+      - name: Sign the image
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      - name: Verify the signature we just made
+        run: |
+          cosign verify "${IMAGE}@${{ steps.build.outputs.digest }}" \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.2.0
+
+      # Deploys only when a cluster credential is actually configured. A deploy
+      # step that silently no-ops is worse than an absent one: it reports
+      # success for something that did not happen.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -e ./chaos-framework
+
+      - name: Deploy
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          CHAOSPROOF_DB: ${{ secrets.CHAOSPROOF_DB }}
+        run: |
+          if [ -z "$KUBE_CONFIG" ]; then
+            echo "::notice title=deploy::No KUBE_CONFIG secret configured — image built, signed and verified; deploy skipped."
+            exit 0
+          fi
+          mkdir -p ~/.kube && echo "$KUBE_CONFIG" | base64 -d > ~/.kube/config
+          kubectl get namespace chaosproof >/dev/null 2>&1 || kubectl create namespace chaosproof
+          # The deployer identity, applied before the chart because the chart
+          # cannot grant the permissions needed to install the chart. Helm 4's
+          # `--wait` needs the `watch` verb on every kind the release creates,
+          # and without it the wait blocks and times out with a message that
+          # never mentions RBAC.
+          kubectl apply -f ci/rbac-deployer.yaml
+          # NEVER DEPLOY DURING AN EXPERIMENT. An interrupted execution is an
+          # INVALID run *and* an orphaned fault: the runner is killed mid-fault,
+          # its cleanup saga never runs, and the CronJob finds the ChaosEngine
+          # minutes later. A missing DSN fails the deploy rather than skipping
+          # the check — "we could not tell whether an experiment was running" is
+          # not a reason to proceed.
+          python - <<'PY'
+          import os, sys
+          import psycopg
+          dsn = os.environ.get("CHAOSPROOF_DB", "")
+          if not dsn:
+              sys.exit("CHAOSPROOF_DB secret is not set — cannot confirm no experiment "
+                       "is running, so refusing to deploy")
+          with psycopg.connect(dsn, connect_timeout=10) as conn:
+              running = conn.execute(
+                  "SELECT count(*) FROM experiment_executions "
+                  "WHERE verdict IS NULL AND finished_at IS NULL").fetchone()[0]
+          if running:
+              sys.exit(f"{running} execution(s) still running — refusing to deploy "
+                       "mid-experiment")
+          print("no running executions; safe to deploy")
+          PY
+          helm upgrade --install chaosproof charts/chaosproof \
+            --namespace chaosproof \
+            --set image.repository="${IMAGE}" \
+            --set image.tag="${{ github.sha }}" \
+            --wait --atomic --timeout 10m
