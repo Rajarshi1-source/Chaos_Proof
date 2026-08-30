@@ -374,10 +374,16 @@ def test_the_capacity_preflight_fails_rather_than_skips(chaos_gate):
     assert "::error" in guard["run"]
 
 
-def test_the_capacity_requirement_exceeds_a_default_hosted_runner(workflow):
-    """`ubuntu-latest` is 2 vCPU. Measured pod requests total ~4000m, so the
-    requirement must be above 2 or the check passes and the job still fails."""
-    assert int(workflow["env"]["REQUIRED_VCPU"]) > 2
+def test_the_capacity_requirement_leaves_room_for_litmus_helper_pods(workflow):
+    """Measured steady-state requests are 4000m. The requirement must exceed
+    that by enough for the helper pods Litmus creates AT INJECTION TIME — a
+    node sized to exactly 4000m schedules the cluster, starts the load plane,
+    and then cannot place the first fault, 25 minutes in."""
+    STEADY_STATE_REQUESTS_M = 4000
+    headroom = int(workflow["env"]["REQUIRED_VCPU"]) * 1000 - STEADY_STATE_REQUESTS_M
+    assert headroom >= 1500, (
+        f"only {headroom}m of headroom above steady-state requests — not enough "
+        "for Litmus helpers plus JVM burst under load")
 
 
 def test_the_runner_label_is_overridable_without_editing_the_workflow(chaos_gate):

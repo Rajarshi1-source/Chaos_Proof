@@ -72,7 +72,17 @@ env:
   POSTGRES_IMAGE: postgres:18.6-alpine
   # Derived from measured pod requests, not guessed — see the capacity
   # pre-flight in chaos-gate for the breakdown.
-  REQUIRED_VCPU: "4"
+  #
+  # 8, NOT 4. Steady-state requests total 4000m, so a 4-core node has exactly
+  # ZERO headroom: it schedules the platform and the target app and then has
+  # nothing left for the Litmus helper pods, which are created per experiment
+  # AT INJECTION TIME. A 4-core runner would therefore pass this check, build
+  # the whole cluster, start the load plane, and fail at the first fault with
+  # an unschedulable helper — the same "gets far enough to look fine" failure
+  # the kind CLI pin exists to prevent, and 25 minutes deeper into the job.
+  # 8 cores leaves ~4000m for helpers, JVM headroom under load, and the 5s
+  # scrape.
+  REQUIRED_VCPU: "8"
   REQUIRED_MEM_GB: "15"
 
 jobs:
@@ -254,7 +264,7 @@ jobs:
           MEM_GB=$(( $(getconf _PHYS_PAGES) * $(getconf PAGE_SIZE) / 1073741824 ))
           echo "runner: ${CORES} vCPU, ${MEM_GB} GB, label '${{ vars.CHAOS_GATE_RUNNER || 'ubuntu-latest' }}'"
           if [ "$CORES" -lt "$REQUIRED_VCPU" ] || [ "$MEM_GB" -lt "$REQUIRED_MEM_GB" ]; then
-            echo "::error title=chaos-gate: runner too small::RUNNER_TOO_SMALL — this runner has ${CORES} vCPU / ${MEM_GB}GB; the chaos gate needs at least ${REQUIRED_VCPU} vCPU / ${REQUIRED_MEM_GB}GB. Pod requests total ~4000m against ${CORES}000m allocatable, so the target-app pods cannot schedule and helm --wait times out after 10 minutes. Set the CHAOS_GATE_RUNNER repository variable to a larger runner label. Do NOT fix this by lowering min_rps_floor or dropping replicas: a gate that cannot generate load reports success without evidence."
+            echo "::error title=chaos-gate: runner too small::RUNNER_TOO_SMALL — this runner has ${CORES} vCPU / ${MEM_GB}GB; the chaos gate needs at least ${REQUIRED_VCPU} vCPU / ${REQUIRED_MEM_GB}GB. Pod requests total ~4000m against ${CORES}000m allocatable, so the target-app pods cannot schedule and helm --wait times out after 10 minutes. Set the CHAOS_GATE_RUNNER repository variable to a larger runner label. NOTE: GitHub larger hosted runners need a Team/Enterprise plan; on a personal account the route is a self-hosted runner. Do not set this variable to a label that does not exist - the job then queues forever, which is worse than failing here. Do NOT fix this by lowering min_rps_floor or dropping replicas: a gate that cannot generate load reports success without evidence."
             exit 1
           fi
           echo "capacity OK"
