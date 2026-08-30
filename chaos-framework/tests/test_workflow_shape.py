@@ -415,3 +415,51 @@ def test_cleanup_is_gated_on_a_cluster_existing(chaos_gate):
 def test_the_load_plane_teardown_still_runs_on_every_exit_path(chaos_gate):
     stop = next(s for s in chaos_gate["steps"] if "delete testrun" in s.get("run", ""))
     assert "always()" in stop["if"]
+
+
+# --------------------------------------------------------------------------- #
+# Phase 8 landed the last two hermetic gates. A gate that can silently skip
+# itself is not a gate.
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("module", ["evals.replay_eval", "evals.alert_rule_lint"])
+def test_the_hermetic_evals_run_unconditionally(workflow, module):
+    """These steps once carried an `if [ -f ... ]` guard that warned and passed
+    while the module was still unwritten. Now that they exist, a missing file
+    must fail the job — otherwise deleting an eval is a way to make CI green."""
+    step = next(s for s in workflow["jobs"]["replay-eval"]["steps"]
+                if module in s.get("run", ""))
+    run = step["run"]
+    assert "if [ -f" not in run, f"{module} can still skip itself"
+    assert "::warning" not in run, f"{module} degrades to a warning instead of failing"
+
+
+def test_every_eval_module_the_workflow_invokes_actually_exists():
+    """The guards are gone, so a typo in a module name is now a hard CI failure
+    rather than a silent skip. Catch it here, in milliseconds."""
+    import re
+    text = WORKFLOW.read_text(encoding="utf-8")
+    for module in sorted(set(re.findall(r"python -m (evals\.[a-z_]+)", text))):
+        path = REPO_ROOT / (module.replace(".", "/") + ".py")
+        assert path.exists(), f"workflow runs {module} but {path} does not exist"
+
+
+def test_the_replay_corpus_meets_its_minimum_size():
+    """The plan requires >=20 bundles. A corpus that shrinks below that has
+    lost regression cases, which is how a fixed defect comes back."""
+    corpus = list((REPO_ROOT / "evals" / "corpus").glob("*.json"))
+    assert len(corpus) >= 20, f"corpus has {len(corpus)} cases, minimum is 20"
+
+
+def test_the_frozen_digest_set_covers_the_whole_corpus():
+    """A corpus case with no frozen digest is unanchored: its behaviour could
+    change without the determinism gate noticing."""
+    import json
+    digests = json.loads((REPO_ROOT / "evals" / "frozen_digests.json")
+                         .read_text(encoding="utf-8"))
+    from src.scoring import scorer
+    frozen = digests.get(scorer.SCORER_VERSION, {})
+    names = {p.stem for p in (REPO_ROOT / "evals" / "corpus").glob("*.json")}
+    assert set(frozen) == names, (
+        "frozen digests and corpus cases disagree: "
+        f"unfrozen={sorted(names - set(frozen))} stale={sorted(set(frozen) - names)}")

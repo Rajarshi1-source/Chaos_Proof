@@ -23,7 +23,8 @@ in YAML is a rule someone deletes while debugging:
 
   2. GATING STATUS is resolved per experiment. An advisory experiment reports its
      verdict and never blocks the merge; only a characterised gating experiment
-     can. Flakiness data may demote; it may never promote.
+     can. Flakiness measurement moves that status in both directions; the
+     registry decides which experiments are candidates at all.
 
   3. NOT-HELD IS NOT A NUANCE. On a gating experiment, every verdict other than
      `held` fails the job — falsified, invalid, aborted, skipped and denied
@@ -116,14 +117,28 @@ def _load_registry() -> tuple[dict, int]:
     return entries, int(doc.get("min_clean_runs", FLAKINESS_WINDOW))
 
 
-def _measured_demotions() -> dict[str, str]:
-    """Phase 8's automatic quarantine, read one-way: an experiment recorded as
-    non-gating in `experiment_flakiness` is demoted here regardless of what the
-    registry declares. Nothing in this function can promote an experiment.
+def _measured_status() -> dict[str, tuple[bool, str]]:
+    """What flakiness measurement (§21.3) records for each experiment.
+
+    PHASE 8 CHANGES THE PHASE 7 RULE, deliberately. Phase 7 read this one-way —
+    measurement could demote but never promote — because there was no
+    characterisation mechanism yet, and letting an uncharacterised experiment
+    gain merge-blocking authority from a database row would have been worse
+    than a declared bootstrap. Phase 8 builds the mechanism the plan specifies:
+    an experiment earns gating status after FLAKINESS_WINDOW clean runs on
+    unchanged code. So measured status now moves in BOTH directions.
+
+    What has NOT changed is the safety property that made the one-way rule
+    right: promotion still requires the experiment to be declared a candidate
+    in `ci/gating-experiments.yaml`. Adding an experiment file and letting it
+    run 20 times must never, on its own, grant it the power to block other
+    people's merges — that decision stays a reviewed one. Measurement decides
+    whether a CANDIDATE is stable enough; the registry decides what may be a
+    candidate at all.
 
     The evidence store is not reachable from every CI job, and that must not be
-    the thing that decides whether a merge is blocked — so an unreachable store
-    means "no demotions known", never "everything is fine".
+    what decides whether a merge is blocked — so an unreachable store means "no
+    measured status", never "everything is fine".
     """
     try:
         import psycopg
@@ -131,26 +146,44 @@ def _measured_demotions() -> dict[str, str]:
         from ..db import DSN
         with psycopg.connect(DSN, connect_timeout=5) as conn, conn.cursor() as cur:
             cur.execute(
-                """SELECT et.name, f.gating, f.score_stddev
+                """SELECT et.name, f.gating, f.score_stddev, f.window_runs,
+                          f.quarantine_reason
                      FROM experiment_flakiness f
                      JOIN experiment_types et ON et.id = f.experiment_type_id""")
             rows = cur.fetchall()
     except Exception as exc:                                   # noqa: BLE001
         print(f"note       : flakiness data unreachable ({type(exc).__name__}); "
-              "no measured demotions applied")
+              "no measured status applied")
         return {}
 
-    demoted = {}
-    for name, gating, stddev in rows:
-        if not gating:
-            sigma = "unknown" if stddev is None else f"{float(stddev):.4f}"
-            demoted[name] = f"quarantined by flakiness measurement, sigma={sigma}"
-    return demoted
+    out: dict[str, tuple[bool, str]] = {}
+    for name, gating, stddev, window_runs, quarantine_reason in rows:
+        sigma = "unknown" if stddev is None else f"{float(stddev):.4f}"
+        if gating:
+            out[name] = (True, f"characterised by measurement, sigma={sigma}, "
+                               f"{window_runs} runs")
+        else:
+            out[name] = (False, quarantine_reason
+                         or f"not gating by measurement, sigma={sigma}")
+    return out
 
 
 def resolve_gating(names: list[str]) -> dict[str, GatingStatus]:
+    """Registry declares candidacy; measurement decides authority.
+
+    Order of precedence, and each step exists to close a specific hole:
+
+      1. Not in the registry  -> advisory. Adding an experiment file must never
+         grant merge-blocking power, however stable it later proves to be.
+      2. Declared advisory    -> advisory. An explicit opt-out is honoured.
+      3. Measured             -> measurement wins, in both directions. This is
+         the §21.3 mechanism: 20 clean runs earn gating, and flakiness loses it.
+      4. Unmeasured           -> the registry's bootstrap exception, labelled
+         as uncharacterised on every single run so it can never pass for a
+         measured result.
+    """
     entries, min_clean = _load_registry()
-    demotions = _measured_demotions()
+    measured = _measured_status()
     out: dict[str, GatingStatus] = {}
 
     for name in names:
@@ -158,11 +191,13 @@ def resolve_gating(names: list[str]) -> dict[str, GatingStatus]:
         if entry is None:
             out[name] = GatingStatus(name, False, "not in ci/gating-experiments.yaml")
             continue
-        if name in demotions:
-            out[name] = GatingStatus(name, False, demotions[name])
-            continue
         if not entry.get("gating"):
             out[name] = GatingStatus(name, False, "declared advisory")
+            continue
+
+        if name in measured:
+            gating, note = measured[name]
+            out[name] = GatingStatus(name, gating, note)
             continue
 
         clean = int(entry.get("clean_runs", 0))

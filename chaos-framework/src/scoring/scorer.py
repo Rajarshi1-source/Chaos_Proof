@@ -62,6 +62,31 @@ def classify(score: float) -> str:
     return "partial"
 
 
+def checks_for_verdict(checks: list[Check], verdict: str) -> list[Check]:
+    """Apply the verdict's consequence to the check list.
+
+    An INVALID or ABORTED run is not scoreable, and that has to be true of the
+    CHECKS too, not only of the final number: on an invalid run the four
+    validators were reading the same broken measurement plane the hypothesis
+    was, and on an aborted run the fault was cut short before they saw what
+    they are grading. Leaving them as passes and merely suppressing the total
+    would leave four green rows in the evidence bundle describing a run that
+    measured nothing.
+
+    Lives here rather than in the runner because the replay eval must apply
+    exactly the same coupling. Two implementations of this rule would drift,
+    and the corpus would then certify behaviour the runner no longer has.
+    """
+    if verdict not in ("invalid", "aborted"):
+        return checks
+    out = []
+    for c in checks:
+        poisoned = Check(c.check_type, c.check_name, c.applicable, "invalid", None,
+                         c.expected_value, c.actual_value, c.message, dict(c.details))
+        out.append(poisoned)
+    return out
+
+
 def calculate(checks: list[Check]) -> ScoreResult:
     # INVALID poisons everything — not a zero, no score at all.
     if any(c.outcome == "invalid" for c in checks):
@@ -94,7 +119,13 @@ def epoch_material(gating_experiments: list[str]) -> dict:
     """Everything that changes the MEANING of a score. Any change here must open
     a new epoch, or the trend chart silently compares incomparable numbers."""
     return {
-        "weights": WEIGHTS,
+        # A COPY, not the live dict. An Epoch is meant to be an immutable record
+        # of the weights a score was computed under; handing out a reference to
+        # the module-level WEIGHTS makes every Epoch object share one mutable
+        # dict, so two epochs taken either side of a weight change compare equal
+        # on weights and `epochs.diff` can never report the very change the
+        # mechanism exists to surface.
+        "weights": dict(WEIGHTS),
         "experiment_set": sorted(gating_experiments),   # GATING experiments only
         "slo_version": SLO_VERSION,
         "scorer_version": SCORER_VERSION,

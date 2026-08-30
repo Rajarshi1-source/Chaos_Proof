@@ -218,9 +218,10 @@ def run(spec_path: pathlib.Path, prom_url: str, testrun: str, alertmanager_url: 
                                  spec.get("pattern_name")),
             V.recovery_completeness(samples),
         ]
-        if verdict.verdict in ("invalid", "aborted"):
-            for c in check_list:
-                c.outcome, c.score = "invalid", None
+        # The same coupling the replay eval applies, from one implementation:
+        # an unscoreable verdict poisons its checks too, so the bundle never
+        # carries four green rows describing a run that measured nothing.
+        check_list = scorer.checks_for_verdict(check_list, verdict.verdict)
         score = scorer.calculate(check_list)
 
         # STAGE 6 — cleanup on the success path too, THEN persist.

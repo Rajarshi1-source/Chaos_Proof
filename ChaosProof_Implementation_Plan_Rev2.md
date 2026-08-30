@@ -2843,7 +2843,7 @@ The corpus must include the cases that catch the Rev 1 defects, which is how you
 | Case | Asserts |
 |---|---|
 | `no_load_zero_traffic` | Verdict is **`invalid`**, not `held` — the D1 regression test |
-| `pattern_not_applicable` | Weights **renormalise** to 0.75; score is 0.588, not 0.625 — the D3 regression test |
+| `pattern_not_applicable` | Weights **renormalise** to 0.75; score is **0.6667**, not 0.625 — the D3 regression test. (Published as 0.588 in earlier drafts; that is 0.50/0.85, excluding the wrong weight. Corrected by GATE 4 and pinned by `evals/corpus/pattern_not_applicable.json`.) |
 | `empty_promql_series` | Missing series → `invalid`, never a pass — the §14.3 rule |
 | `alert_for_exceeds_slo` | Config assertion fails and names the rule — §16.5 |
 | `dropped_iterations_high` | Load generator saturated → `invalid` |

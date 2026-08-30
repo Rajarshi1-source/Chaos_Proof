@@ -143,25 +143,25 @@ jobs:
       - name: Scoring worked example — renormalisation, hermetic
         run: python -m evals.scoring_worked_example
 
-      # The remaining two evals land with Phase 8 (§21.2 replay corpus and
-      # determinism digest; §16.5 alert-rule arithmetic). The steps exist now
-      # with the job shape and turn themselves on when the modules appear —
-      # loudly, so an absent gate is never mistaken for a passing one.
+      # Landed in Phase 8. The guards these steps used to carry — "not present
+      # yet, NOT gating this PR" — are gone, because a gate that can silently
+      # skip itself is not a gate. If either file disappears, the step now
+      # fails rather than warning.
+      #
+      # Replays >=20 committed evidence bundles through the hypothesis engine
+      # and the scorer, and compares a digest of every (verdict, score) pair
+      # against a frozen artefact keyed by SCORER_VERSION. A deliberate scoring
+      # change moves those digests, and the reviewer updates the frozen set IN
+      # THE SAME PR — which is what makes every scoring-affecting change
+      # visible in review rather than discovered in a trend chart later.
       - name: Replay eval — corpus + determinism digest
-        run: |
-          if [ -f evals/replay_eval.py ]; then
-            python -m evals.replay_eval
-          else
-            echo "::warning title=replay-eval::evals/replay_eval.py is not present yet (Phase 8). The replay corpus is NOT gating this PR."
-          fi
+        run: python -m evals.replay_eval
 
+      # An alert cannot fire faster than scrape + evaluation + `for:`. A rule
+      # whose irreducible floor exceeds its own SLO can never pass, and grading
+      # a system against it grades an impossibility.
       - name: Alert-rule lint — impossible-SLO arithmetic
-        run: |
-          if [ -f evals/alert_rule_lint.py ]; then
-            python -m evals.alert_rule_lint
-          else
-            echo "::warning title=alert-rule-lint::evals/alert_rule_lint.py is not present yet (Phase 8). Alert rules are NOT linted on this PR."
-          fi
+        run: python -m evals.alert_rule_lint
 
   # ==========================================================================
   # 3. contract-gate — surfaces weakened guarantees for review.

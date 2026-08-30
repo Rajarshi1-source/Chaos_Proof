@@ -89,7 +89,17 @@ def persist_run(*, spec: dict, verdict: str | None, reason: str | None,
                     "JOIN experiment_flakiness f ON f.experiment_type_id = t.id "
                     "WHERE f.gating IS TRUE ORDER BY t.name")
         gating = [r[0] for r in cur.fetchall()]
-        epoch_id = ensure_epoch(cur, gating, "epoch 1 - initial scorer (Phase 4)")
+        # The reason is DERIVED, never a fixed string. An epoch opened here was
+        # opened implicitly — by a scorer or SLO change that reached a run
+        # before anyone ran `chaosctl epoch --open` — and saying so is more
+        # useful on a trend-chart boundary than a stale phase label. (Epoch 11
+        # carried "epoch 1 - initial scorer (Phase 4)" for exactly this reason,
+        # having actually been opened by the Phase 7 SLO v2 correction.)
+        epoch_id = ensure_epoch(
+            cur, gating,
+            f"opened implicitly by a run of {spec['name']}: scorer "
+            f"{scorer.SCORER_VERSION}, SLO v{scorer.SLO_VERSION}, "
+            f"gating set [{', '.join(gating) or 'none'}]")
 
         cur.execute(
             """INSERT INTO experiment_executions

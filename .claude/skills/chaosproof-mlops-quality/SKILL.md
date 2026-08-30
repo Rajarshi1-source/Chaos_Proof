@@ -73,7 +73,7 @@ assert digests == frozen_digests[SCORER_VERSION]      # determinism anchor
 | Case | Asserts |
 |---|---|
 | `no_load_zero_traffic` | Verdict is **`invalid`**, not `held` — the load-plane regression test |
-| `pattern_not_applicable` | Weights **renormalise** to 0.75; score is 0.588, not 0.625 |
+| `pattern_not_applicable` | Weights **renormalise** to 0.75; score is **0.6667**, not 0.625. (0.588 appeared in earlier drafts and is wrong: it is 0.50/0.85, the 0.15 completeness weight excluded instead of the 0.25 pattern weight. Corrected by GATE 4, 26 Aug 2026, and pinned by the corpus case of the same name.) |
 | `empty_promql_series` | Missing series → `invalid`, never a pass |
 | `alert_for_exceeds_slo` | Config assertion fails and names the rule |
 | `dropped_iterations_high` | Load generator saturated → `invalid` |

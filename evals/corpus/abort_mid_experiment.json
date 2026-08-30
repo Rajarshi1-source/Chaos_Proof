@@ -1,0 +1,166 @@
+{
+  "bundle": {
+    "abort": {
+      "comparator": "<",
+      "condition": "availability_collapse",
+      "observed": 0.5,
+      "path": "python_watchdog",
+      "threshold": 0.8
+    },
+    "bundle_sha256": "89f93b23d717b33c6ab45e817c5de144e84474336395a37c65edbd9d3de926a1",
+    "chaos_result": null,
+    "checks": [
+      {
+        "applicable": true,
+        "check_name": "slo_recovery",
+        "check_type": "slo_recovery",
+        "message": "",
+        "outcome": "invalid",
+        "score": null
+      },
+      {
+        "applicable": true,
+        "check_name": "alert_validation",
+        "check_type": "alert_validation",
+        "message": "",
+        "outcome": "invalid",
+        "score": null
+      },
+      {
+        "applicable": true,
+        "check_name": "resilience_pattern",
+        "check_type": "resilience_pattern",
+        "message": "",
+        "outcome": "invalid",
+        "score": null
+      },
+      {
+        "applicable": true,
+        "check_name": "recovery_completeness",
+        "check_type": "recovery_completeness",
+        "message": "",
+        "outcome": "invalid",
+        "score": null
+      }
+    ],
+    "cleanup": [
+      {
+        "name": "stop_chaosengine",
+        "ok": true
+      },
+      {
+        "name": "delete_chaosengine",
+        "ok": true
+      },
+      {
+        "name": "verify_steady_state",
+        "ok": true
+      }
+    ],
+    "epoch": {
+      "epoch_sha256": "c4c49efd79f608ca86908b73522b891466214cf29a6f04247b1edad43e571140",
+      "experiment_set": [],
+      "scorer_version": "1.0.0",
+      "slo_version": 2,
+      "weights": {
+        "alert_validation": 0.25,
+        "recovery_completeness": 0.15,
+        "resilience_pattern": 0.25,
+        "slo_recovery": 0.35
+      }
+    },
+    "experiment": "abort_mid_experiment",
+    "git_sha": "4c19ba24c19ba24c19ba24c19ba24c19ba2abcde",
+    "hypothesis": {
+      "abort_conditions": [
+        {
+          "comparator": "<",
+          "metric": "client_availability",
+          "name": "availability_collapse",
+          "source": "k6",
+          "threshold": 0.8
+        }
+      ],
+      "description": "An ABORTED run is not scoreable: the fault was cut short, so the hypothesis was never given the conditions it speaks about. Score is None \u2014 not zero \u2014 and the cleanup log is part of the evidence.",
+      "invariants": [
+        {
+          "comparator": ">=",
+          "metric": "client_availability",
+          "name": "client_availability_holds",
+          "source": "k6",
+          "threshold": 0.99,
+          "tolerance_s": 10
+        }
+      ],
+      "min_rps_floor": 90.0,
+      "version": 1
+    },
+    "load": {
+      "achieved_rps": 119.4,
+      "coverage": 1.0,
+      "dropped_iterations": 0,
+      "min_rps_floor": 90.0,
+      "script_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "target_rps": 120.0,
+      "tool": "k6",
+      "tool_version": "2.2.0",
+      "workload_model": "open"
+    },
+    "preflight": null,
+    "samples": [
+      {
+        "client": {
+          "client_availability": 1.0
+        },
+        "server": {},
+        "t": 1788000000.0
+      },
+      {
+        "client": {
+          "client_availability": 1.0
+        },
+        "server": {},
+        "t": 1788000005.0
+      },
+      {
+        "client": {
+          "client_availability": 0.5
+        },
+        "server": {},
+        "t": 1788000010.0
+      },
+      {
+        "client": {
+          "client_availability": 0.5
+        },
+        "server": {},
+        "t": 1788000015.0
+      },
+      {
+        "client": {
+          "client_availability": 0.5
+        },
+        "server": {},
+        "t": 1788000020.0
+      },
+      {
+        "client": {
+          "client_availability": 0.5
+        },
+        "server": {},
+        "t": 1788000025.0
+      }
+    ],
+    "schema_version": 1,
+    "score": null,
+    "verdict": "aborted",
+    "verdict_reason": null
+  },
+  "expected": {
+    "cleanup_steps": 3,
+    "score": null,
+    "verdict": "aborted"
+  },
+  "name": "abort_mid_experiment",
+  "why": "An ABORTED run is not scoreable: the fault was cut short, so the hypothesis was never given the conditions it speaks about. Score is None \u2014 not zero \u2014 and the cleanup log is part of the evidence."
+}

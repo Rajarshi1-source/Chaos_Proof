@@ -1,0 +1,29 @@
+{
+  "1.0.0": {
+    "abort_mid_experiment": "69ecd8ddb8ec4ab696c1eceef2c57f98b828ef61f9b6a657c931405709329f91",
+    "alert_for_exceeds_slo": "6af8ef993d3f3c6f0593b194b6fd5091da6f91dd5d41ea448b74283215613409",
+    "all_checks_invalid_no_score": "b575a695058a0fa3850c6950bc45b9894429a12839230e7e5af6552d5bd7445c",
+    "breaker_never_opens": "75a910201de443452c6ee1fcfc7895bb8b6da4b0d3b19515f834fb9ce4cdb6ee",
+    "client_server_availability_gap": "ae5e62a8a93fe142d90f51cfb05080f1648b1caf9d38253844ec7c954152a716",
+    "dropped_iterations_high": "13f169dfdb4f3be64ee24bd2c7a006443586caf8e771422333e25cd124772fec",
+    "empty_promql_series": "01be1eb1c2da438df2f52b437db70e4e9a8ba64cc12ec27fa37672fd5a230c63",
+    "epoch_mismatch": "2eda101a46a0b5dcfb6fd0ca67d6afac364e1456a7ba5c00289ad8cac38bb882",
+    "flapping_recovery_is_falsified": "f2d461e01c65d91512fd4e72c427376492b0e24ed1f32591cf93f9cc408f34a6",
+    "invalid_outranks_falsified": "7e60c4b2f2472a1a014621433c903db6a1024eb357f62e4397ab045299f41521",
+    "lingering_throttle_is_partial_recovery": "adbd544abad048d98aa41795bf3bcd50a5e13d7ffaf958ba012bd13e88e4a770",
+    "never_breached_is_held_not_missing_recovery": "2168929a3cf7fb074d89cda0331cebc73f2429a8bf5e1b416b587407e68fa12d",
+    "no_load_zero_traffic": "ba45223b0803d8286a05679c220b8e40e066ec4e517dfdb6dc39da72a255fc57",
+    "partial_credit_is_proportional": "645f13bda4154cc68f85123adf86f93c8391f6232357b694aebb99634b2521df",
+    "partition_breaker_opens": "f85b1d3c10ae3800b900afb6cecdc6b9c79a505f43cc1d76a0e4e78e2500ef11",
+    "pattern_metric_absent_is_invalid_not_fail": "8e1ec2a0fe5394330c976d647b7bcf5a48c3fee48436886deecf1cc0852230b8",
+    "pattern_not_applicable": "8086e49dd9f7c2a98e9a44ec4364e4f8e354204903486d3d89408eb79e360deb",
+    "preflight_denied_by_policy": "a32bb18aa208bb0160f57a304f9ebbb7c761d169fa9bbdbba8489803e98ec740",
+    "preflight_skipped_no_steady_state": "f09af125f93537d4b531d8e8e9dc9dd336bf0ddac4f3c523810c22891edbc4bf",
+    "recovery_late_falsifies": "2032742a19b124da410aeb7828ea3dc9ae5b0b3f1923dbc432021fd0f7bd79c5",
+    "recovery_within_deadline_holds": "b9aa8c7d2f2d9e98e8e918d6b919b8035d185ce9a26fe89abf8a1c4c5447dc84",
+    "sparse_sample_coverage": "b6039161dabe494ab87ba27fe58b69170c9fe6b63d91fed6b53099d4a4484988",
+    "two_checks_excluded_renormalises_further": "a7d6a1222c65cddc49a7ba3bfd5189f783f03dfd4c750e9a4f0c5ce61d7b1b85",
+    "two_short_breaches_do_not_accumulate": "9027c1a33d053a38bc1d3122daeb8f8260a8f4d6710c6b7b0c9e223ce1dbd040",
+    "unhealed_breach_extends_to_window_end": "21080a41e575b2e7668a512a9f07061f13e66d6b71aa8046e94cad7917dfc3e5"
+  }
+}

@@ -24,8 +24,8 @@ VALID = LoadFacts(achieved_rps=119.4, dropped_iterations=0, coverage=1.0)
 @pytest.fixture(autouse=True)
 def no_evidence_store(monkeypatch):
     """Gating resolution must not depend on a reachable database, and an
-    unreachable one must mean 'no demotions known', never 'everything fine'."""
-    monkeypatch.setattr(ci_runner, "_measured_demotions", lambda: {})
+    unreachable one must mean 'no measured status', never 'everything fine'."""
+    monkeypatch.setattr(ci_runner, "_measured_status", lambda: {})
 
 
 # --------------------------------------------------------------------------- #
@@ -55,7 +55,7 @@ def test_every_gating_entry_states_a_reason():
 
 
 # --------------------------------------------------------------------------- #
-# Gating resolution. One-way: measured data may demote, never promote.
+# Gating resolution. Registry declares candidacy; measurement decides authority.
 # --------------------------------------------------------------------------- #
 
 def test_unknown_experiment_is_advisory_not_gating():
@@ -99,21 +99,47 @@ def test_characterised_entry_gates_without_the_bootstrap_label(monkeypatch, tmp_
 
 
 def test_measured_flakiness_demotes_a_gating_experiment(monkeypatch):
-    """Phase 8's quarantine, exercised: a flaky experiment loses its authority
-    to block without anyone editing a file."""
-    monkeypatch.setattr(ci_runner, "_measured_demotions",
-                        lambda: {"network_partition_payment": "quarantined, sigma=0.1400"})
+    """Quarantine, exercised: a flaky experiment loses its authority to block
+    without anyone editing a file."""
+    monkeypatch.setattr(ci_runner, "_measured_status",
+                        lambda: {"network_partition_payment":
+                                 (False, "quarantined, sigma=0.1400")})
     st = ci_runner.resolve_gating(["network_partition_payment"])["network_partition_payment"]
     assert st.gating is False
     assert "sigma=0.1400" in st.note
 
 
-def test_measured_data_can_never_promote_an_advisory_experiment(monkeypatch):
-    """The demotion path reads only non-gating rows. There is deliberately no
-    code path from the evidence store to 'this may now block a merge'."""
-    monkeypatch.setattr(ci_runner, "_measured_demotions",
-                        lambda: {"disk_fill_inventory": "quarantined"})
+def test_measurement_promotes_a_characterised_candidate(monkeypatch):
+    """Phase 8 changes the Phase 7 one-way rule deliberately: 20 clean runs on
+    unchanged code is how an experiment EARNS gating status (§21.3), so
+    measurement must be able to promote as well as demote."""
+    monkeypatch.setattr(ci_runner, "_measured_status",
+                        lambda: {"network_partition_payment":
+                                 (True, "characterised by measurement, sigma=0.0100")})
+    st = ci_runner.resolve_gating(["network_partition_payment"])["network_partition_payment"]
+    assert st.gating is True
+    assert "characterised by measurement" in st.note
+
+
+def test_measurement_cannot_promote_an_experiment_absent_from_the_registry(monkeypatch):
+    """The safety property that survives from Phase 7: adding an experiment file
+    and letting it run 20 times must not, on its own, grant it power over other
+    people's merges. Measurement decides whether a CANDIDATE is stable; the
+    registry decides what may be a candidate at all."""
+    monkeypatch.setattr(ci_runner, "_measured_status",
+                        lambda: {"disk_fill_inventory": (True, "stable, sigma=0.001")})
     assert ci_runner.resolve_gating(["disk_fill_inventory"])["disk_fill_inventory"].gating is False
+
+
+def test_measurement_cannot_promote_an_experiment_declared_advisory(monkeypatch, tmp_path):
+    """An explicit opt-out in the registry outranks a stable measurement."""
+    registry = tmp_path / "gating.yaml"
+    registry.write_text(yaml.safe_dump({
+        "version": 1, "min_clean_runs": 20,
+        "experiments": [{"name": "x", "gating": False}]}))
+    monkeypatch.setattr(ci_runner, "GATING_REGISTRY", registry)
+    monkeypatch.setattr(ci_runner, "_measured_status", lambda: {"x": (True, "stable")})
+    assert ci_runner.resolve_gating(["x"])["x"].gating is False
 
 
 def test_missing_registry_leaves_everything_advisory(monkeypatch, tmp_path):

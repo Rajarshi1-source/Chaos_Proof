@@ -1,0 +1,177 @@
+{
+  "bundle": {
+    "abort": null,
+    "bundle_sha256": "2e52fbe4c347490c2a67d882af3584be4d5d2ad49fca3b67ddf349f2b1267d48",
+    "chaos_result": null,
+    "checks": [
+      {
+        "applicable": true,
+        "check_name": "slo_recovery",
+        "check_type": "slo_recovery",
+        "message": "",
+        "outcome": "pass",
+        "score": 1.0
+      },
+      {
+        "applicable": true,
+        "check_name": "alert_validation",
+        "check_type": "alert_validation",
+        "message": "",
+        "outcome": "pass",
+        "score": 1.0
+      },
+      {
+        "applicable": true,
+        "check_name": "resilience_pattern",
+        "check_type": "resilience_pattern",
+        "message": "",
+        "outcome": "pass",
+        "score": 1.0
+      },
+      {
+        "applicable": true,
+        "check_name": "recovery_completeness",
+        "check_type": "recovery_completeness",
+        "message": "",
+        "outcome": "pass",
+        "score": 1.0
+      }
+    ],
+    "cleanup": [
+      {
+        "name": "stop_chaosengine",
+        "ok": true
+      },
+      {
+        "name": "verify_steady_state",
+        "ok": true
+      }
+    ],
+    "epoch": {
+      "epoch_sha256": "c4c49efd79f608ca86908b73522b891466214cf29a6f04247b1edad43e571140",
+      "experiment_set": [],
+      "scorer_version": "1.0.0",
+      "slo_version": 2,
+      "weights": {
+        "alert_validation": 0.25,
+        "recovery_completeness": 0.15,
+        "resilience_pattern": 0.25,
+        "slo_recovery": 0.35
+      }
+    },
+    "experiment": "partition_breaker_opens",
+    "git_sha": "4c19ba24c19ba24c19ba24c19ba24c19ba2abcde",
+    "hypothesis": {
+      "abort_conditions": [
+        {
+          "comparator": "<",
+          "metric": "client_availability",
+          "name": "availability_collapse",
+          "source": "k6",
+          "threshold": 0.8
+        }
+      ],
+      "description": "The headline result, held: under a full partition the breaker opens within its deadline and the fallback keeps checkout available.",
+      "invariants": [
+        {
+          "comparator": ">=",
+          "metric": "client_availability",
+          "name": "availability_via_fallback",
+          "source": "k6",
+          "threshold": 0.95,
+          "tolerance_s": 30
+        },
+        {
+          "comparator": ">=",
+          "metric": "cb_payment_open",
+          "name": "circuit_breaker_opens",
+          "recover_within_s": 90,
+          "source": "prometheus",
+          "threshold": 1
+        }
+      ],
+      "min_rps_floor": 90.0,
+      "version": 1
+    },
+    "load": {
+      "achieved_rps": 119.4,
+      "coverage": 1.0,
+      "dropped_iterations": 0,
+      "min_rps_floor": 90.0,
+      "script_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "target_rps": 120.0,
+      "tool": "k6",
+      "tool_version": "2.2.0",
+      "workload_model": "open"
+    },
+    "preflight": null,
+    "samples": [
+      {
+        "client": {
+          "client_availability": 1.0
+        },
+        "server": {
+          "cb_payment_open": 0
+        },
+        "t": 1788000000.0
+      },
+      {
+        "client": {
+          "client_availability": 0.97
+        },
+        "server": {
+          "cb_payment_open": 0
+        },
+        "t": 1788000005.0
+      },
+      {
+        "client": {
+          "client_availability": 0.96
+        },
+        "server": {
+          "cb_payment_open": 1
+        },
+        "t": 1788000010.0
+      },
+      {
+        "client": {
+          "client_availability": 0.99
+        },
+        "server": {
+          "cb_payment_open": 1
+        },
+        "t": 1788000015.0
+      },
+      {
+        "client": {
+          "client_availability": 1.0
+        },
+        "server": {
+          "cb_payment_open": 1
+        },
+        "t": 1788000020.0
+      },
+      {
+        "client": {
+          "client_availability": 1.0
+        },
+        "server": {
+          "cb_payment_open": 1
+        },
+        "t": 1788000025.0
+      }
+    ],
+    "schema_version": 1,
+    "score": {
+      "score": 1.0
+    },
+    "verdict": "held",
+    "verdict_reason": null
+  },
+  "expected": {
+    "score": 1.0,
+    "verdict": "held"
+  },
+  "name": "partition_breaker_opens",
+  "why": "The headline result, held: under a full partition the breaker opens within its deadline and the fallback keeps checkout available."
+}
