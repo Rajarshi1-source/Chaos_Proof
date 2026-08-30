@@ -329,3 +329,21 @@ def test_the_maven_wrapper_is_executable_in_the_index(service):
         f"target-app/{service}/mvnw is not executable in the git index — "
         "the chaos-gate job will fail with 'Permission denied' after paying for "
         "a full cluster bring-up")
+
+
+def test_the_kind_cli_version_is_pinned_not_defaulted(workflow, chaos_gate):
+    """The kind CLI and the node image are a matched pair. Left to the action's
+    default, v0.31.0 created a v1.36.1 cluster successfully and then failed on
+    `kind load docker-image` with 'unknown containerd config version: 4' — a
+    partially compatible CLI gets far enough to look fine, which is worse than
+    an outright refusal."""
+    step = next(s for s in chaos_gate["steps"] if s.get("uses", "").startswith("helm/kind-action"))
+    assert "version" in step["with"], "the kind CLI version must be pinned explicitly"
+    assert workflow["env"]["KIND_VERSION"].startswith("v")
+
+
+def test_the_pinned_kind_cli_understands_the_node_images_containerd(workflow):
+    """containerd config v4 landed in the 1.36 node images and needs kind
+    >= 0.32.0 to read it."""
+    major, minor = (int(p) for p in workflow["env"]["KIND_VERSION"].lstrip("v").split(".")[:2])
+    assert (major, minor) >= (0, 32)

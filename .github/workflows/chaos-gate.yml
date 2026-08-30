@@ -48,6 +48,17 @@ env:
   # different Kubernetes patch than `make kind-up` is how "works on my cluster"
   # gets into a resilience project.
   KIND_NODE: kindest/node:v1.36.1
+  # The kind CLI, pinned as deliberately as the node image — they are a matched
+  # pair, and the failure when they are not is nastier than a clean version
+  # error. helm/kind-action defaulted to v0.31.0, which CREATED the v1.36.1
+  # cluster quite happily and then failed on `kind load docker-image` with
+  # "unknown containerd config version: 4 (supported versions: 2 and 3)". A
+  # partially compatible CLI gets far enough to look fine.
+  # v0.32.0 is what `make kind-up` runs against locally.
+  KIND_VERSION: v0.32.0
+  # Within one minor of the server, which is the supported skew, but pinned
+  # rather than inherited so a runner-image change cannot move it.
+  KUBECTL_VERSION: v1.36.1
   KPS_CHART_VER: "88.5.3"
   # Never `3.x`. Litmus ships monthly, and two minors are load-bearing here:
   # 3.28.0 fixed a stale config leak across multiple probes of the same type
@@ -232,6 +243,8 @@ jobs:
       - name: kind cluster
         uses: helm/kind-action@v1
         with:
+          version: ${{ env.KIND_VERSION }}
+          kubectl_version: ${{ env.KUBECTL_VERSION }}
           cluster_name: chaosproof
           node_image: ${{ env.KIND_NODE }}
           wait: 180s
