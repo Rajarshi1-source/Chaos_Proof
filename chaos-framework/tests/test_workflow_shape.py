@@ -301,3 +301,31 @@ def test_the_job_running_policy_eval_installs_the_policy_extra(workflow):
             continue
         installs = " ".join(r for r in runs if "pip install" in r)
         assert "policy" in installs, f"job {name} runs policy_eval without the policy extra"
+
+
+# --------------------------------------------------------------------------- #
+# File modes. The repo is authored on Windows, which does not carry an
+# executable bit, so a wrapper script committed here is mode 644 in the index
+# and `./mvnw` on a Linux runner fails with "Permission denied" — after the
+# cluster is already up. This test costs a millisecond and catches it before
+# the eight-minute build does.
+# --------------------------------------------------------------------------- #
+
+import subprocess
+
+
+def _index_mode(relpath: str) -> str:
+    out = subprocess.run(["git", "ls-files", "-s", relpath], cwd=REPO_ROOT,
+                         capture_output=True, text=True, timeout=30).stdout
+    assert out.strip(), f"{relpath} is not tracked by git"
+    return out.split()[0]
+
+
+@pytest.mark.parametrize("service", ["order-api", "payment-service", "inventory-service"])
+def test_the_maven_wrapper_is_executable_in_the_index(service):
+    """`git update-index --chmod=+x` is what records this; a local chmod on
+    Windows does nothing and the mode a Linux runner sees comes from the index."""
+    assert _index_mode(f"target-app/{service}/mvnw") == "100755", (
+        f"target-app/{service}/mvnw is not executable in the git index — "
+        "the chaos-gate job will fail with 'Permission denied' after paying for "
+        "a full cluster bring-up")
