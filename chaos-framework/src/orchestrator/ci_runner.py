@@ -271,6 +271,15 @@ def diagnose(verdict) -> str:
         if o.outcome == "invalid":
             parts.append(f"{o.name} could not be measured "
                          f"({o.evidence.get('reason', 'no samples')})")
+        elif kind == "activation" and o.evidence.get("note") == "never activated":
+            worst = "-" if o.worst_value is None else f"{o.worst_value:.4g}"
+            parts.append(f"{o.name} never activated (stayed at {worst}, needed "
+                         f"{o.threshold:.4g} within "
+                         f"{o.evidence.get('deadline_s', 0):.0f}s)")
+        elif kind == "activation":
+            parts.append(f"{o.name} activated late "
+                         f"({o.evidence.get('activated_after_s', 0):.0f}s, deadline "
+                         f"{o.evidence.get('deadline_s', 0):.0f}s)")
         elif kind == "recovery" and o.evidence.get("note") == "never recovered":
             # The signal never once satisfied its comparator in the whole window.
             # For a breaker-state gauge that reads: the breaker never opened.

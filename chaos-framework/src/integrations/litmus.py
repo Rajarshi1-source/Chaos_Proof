@@ -45,6 +45,33 @@ spec:
 #
 # The queries read k6's remote-written series, not server-side metrics: a guard
 # reading server-side counters cannot see the failures that never reached a server.
+# DEFECT D-C, found by the Phase 7 gate and corrected 30 Aug 2026.
+#
+# LABEL VALUES IN A promProbe QUERY MUST BE SINGLE-QUOTED. Litmus 3.31.0 loses
+# double quotes somewhere between the ChaosEngine CRD and the Prometheus HTTP
+# request, and Prometheus rejects the result:
+#
+#     bad_data: invalid parameter "query": 1:41: parse error:
+#     unexpected identifier "ci" in label matching, expected string
+#
+# Column 41 is exactly where the opening quote should have been. Verified
+# against the live cluster with a three-probe engine: `vector(1)` passed,
+# testrun='ci-120rps' passed and returned 120.01 rps, testrun="ci-120rps" gave
+# the parse error above. Single quotes are valid PromQL, so this costs nothing.
+#
+# WHY THIS MATTERED MORE THAN A BROKEN GUARD. Every probe here carries
+# `stopOnFailure: true`, and a probe that ERRORS counts as a failure — so from
+# the moment these probes were introduced, Litmus halted every experiment within
+# seconds of injection. The framework saw a ChaosEngine reach `Stopped`, which
+# is also what a successful abort looks like, and scored the truncated window as
+# a real result. That is how "the chaos framework failed silently" becomes
+# indistinguishable from "everything passed": the partition never bit, the
+# circuit breaker was never given a reason to open, and the hypothesis was
+# falsified by the injector rather than by the system.
+#
+# The runner now refuses to score a run whose probes errored (see
+# runner.py / LitmusClient.chaos_result), so this cannot recur silently even if
+# the quoting regresses.
 PROBE_TEMPLATE = """        probe:
           - name: client-availability-guard
             type: promProbe
@@ -56,7 +83,10 @@ PROBE_TEMPLATE = """        probe:
               stopOnFailure: true
             promProbe/inputs:
               endpoint: {prom_endpoint}
-              query: 1 - avg(k6_http_req_failed_rate{{testrun="{testrun}"}})
+              # Same volume-weighted definition as queries.CLIENT
+              # ["client_availability"] (defect D-A). The in-band and
+              # out-of-band abort paths must not read different numbers.
+              query: 1 - (sum(rate(k6_http_reqs_total{{testrun='{testrun}',expected_response='false'}}[30s])) or vector(0)) / sum(rate(k6_http_reqs_total{{testrun='{testrun}'}}[30s]))
               # NO `type:` here. Verified against the Litmus 3.31.0 CRD:
               # promProbe/inputs.comparator accepts only criteria and value,
               # while cmdProbe REQUIRES type. Including it fails strict decoding
@@ -75,7 +105,7 @@ PROBE_TEMPLATE = """        probe:
             promProbe/inputs:
               endpoint: {prom_endpoint}
               query: >-
-                sum(rate(http_server_requests_seconds_count{{status=~"5..",namespace!="{target_ns}"}}[30s]))
+                sum(rate(http_server_requests_seconds_count{{status=~'5..',namespace!='{target_ns}'}}[30s]))
                 or vector(0)
               comparator:
                 criteria: "<="
@@ -143,14 +173,36 @@ class LitmusClient:
             return "missing"
         return json.loads(proc.stdout).get("status", {}).get("engineStatus", "unknown")
 
+    # A probe whose QUERY failed to execute, as opposed to one whose threshold
+    # was breached. The first is the framework breaking; the second is the
+    # guard doing its job. They arrive on the same field and must never be
+    # read as the same thing.
+    PROBE_EXECUTION_ERRORS = ("unable to run command", "error querying prometheus",
+                              "parse error", "PROM_PROBE_ERROR", "connection refused")
+
     def chaos_result(self, namespace: str, engine: str, fault: str) -> dict:
         proc = _kubectl("get", "chaosresult", f"{engine}-{fault}", "-n", namespace, "-o", "json")
         if proc.returncode != 0:
             return {}
         status = json.loads(proc.stdout).get("status", {})
         exp = status.get("experimentStatus", {})
+
+        # Probe outcomes are evidence, not decoration: `Stopped` is what a
+        # successful abort looks like AND what a crashed probe looks like, so
+        # without this the two are indistinguishable from inside the framework.
+        probes, errors = [], []
+        for probe in status.get("probeStatuses", []) or []:
+            st = probe.get("status", {}) or {}
+            description = str(st.get("description", ""))
+            probes.append({"name": probe.get("name"), "verdict": st.get("verdict"),
+                           "description": description})
+            if any(marker in description for marker in self.PROBE_EXECUTION_ERRORS):
+                errors.append(f"{probe.get('name')}: {description.strip()[:200]}")
+
         return {"verdict": exp.get("verdict"), "phase": exp.get("phase"),
-                "failStep": exp.get("failStep")}
+                "failStep": exp.get("failStep"), "probes": probes,
+                "probe_errors": errors,
+                "probe_success_percentage": exp.get("probeSuccessPercentage")}
 
     def probes_for(self, spec: dict, testrun: str, prom_endpoint: str,
                    target_ns: str = "target-app") -> str:

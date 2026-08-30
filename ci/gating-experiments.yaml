@@ -30,8 +30,13 @@ experiments:
   - name: network_partition_payment
     gating: true
     bootstrap: true
-    clean_runs: 3
-    since: "2026-08-26"
+    # Reset from 3 to 0 on 30 Aug 2026: hypothesis v1 -> v2 (the two breaker
+    # invariants were re-stated as activation claims). A re-stated hypothesis
+    # has not earned the clean runs the old one accumulated, and carrying them
+    # over would be the one shortcut that makes the whole characterisation
+    # mechanism decorative.
+    clean_runs: 0
+    since: "2026-08-30"
     reason: >-
       The project's headline assertion: order-api's circuit breaker opens under
       a full partition and the queued fallback keeps checkout available. This is

@@ -128,3 +128,42 @@ def test_redefining_an_sli_opened_a_new_epoch():
     to what is already stored."""
     assert scorer.SLO_VERSION >= 2
     assert scorer.epoch_material(["x"])["slo_version"] == scorer.SLO_VERSION
+
+
+# --------------------------------------------------------------------------- #
+# D-E: cb_payment_not_permitted_rate read a metric that does not exist, and
+# `or vector(0)` rewrote the resulting empty series as a confident zero. The
+# breaker had in fact rejected 21,265 calls.
+# --------------------------------------------------------------------------- #
+
+SERVER = queries.SERVER
+
+
+def test_short_circuit_rate_reads_the_metric_resilience4j_actually_publishes():
+    """Resilience4j's Micrometer binding exports call outcomes as
+    `..._calls_seconds_count` with kind in {successful, failed, ignored} —
+    not_permitted is NOT among them — and short-circuited calls as the separate
+    counter `..._not_permitted_calls_total`. Verified against the live cluster
+    on 30 Aug 2026."""
+    expr = SERVER["cb_payment_not_permitted_rate"]
+    assert "resilience4j_circuitbreaker_not_permitted_calls_total" in expr
+    assert "circuitbreaker_calls_total" not in expr
+    assert 'kind="not_permitted"' not in expr
+
+
+def test_the_pattern_metrics_do_not_paper_over_an_absent_series():
+    """`or vector(0)` is what turned a wrong metric name into 'the breaker
+    short-circuited nothing'. These two series exist from the moment the breaker
+    instance is registered, so a genuine zero already arrives as a real sample;
+    absence can only mean the pattern is unobservable, and the honest verdict
+    for an unobservable pattern is INVALID."""
+    for name in ("cb_payment_open", "cb_payment_not_permitted_rate"):
+        assert "or vector(0)" not in SERVER[name], (
+            f"{name} must let an absent series stay absent — a missing series "
+            "is never a passing series")
+
+
+def test_the_breaker_state_gauge_selects_the_open_state():
+    """`resilience4j_circuitbreaker_state` is one series per state. Dropping the
+    state matcher would sum all six and always read 1."""
+    assert 'state="open"' in SERVER["cb_payment_open"]

@@ -189,6 +189,25 @@ def run(spec_path: pathlib.Path, prom_url: str, testrun: str, alertmanager_url: 
             verdict.verdict = "aborted"
             verdict.reason = watchdog.reason
 
+        # Nor is a run whose IN-BAND GUARD NEVER RAN (defect D-C). A promProbe
+        # that fails to execute still counts as a probe failure, and every one of
+        # them carries stopOnFailure: true — so Litmus halts the fault seconds
+        # after injection and the ChaosEngine reaches `Stopped`, which is exactly
+        # what a successful abort looks like from the outside. The window then
+        # gets evaluated as though the fault had run for its declared duration.
+        #
+        # It falsifies rather than passes, which sounds like the safe direction
+        # until you read the verdict: the hypothesis was falsified by the
+        # INJECTOR failing, and the report names the system. That is worse than a
+        # false pass, because it is a confident wrong answer with evidence
+        # attached. INVALID is the honest verdict — nothing was measured — and it
+        # is checked after the abort branch so a genuine abort keeps its own name.
+        elif chaos.get("probe_errors"):
+            verdict.verdict = "invalid"
+            verdict.reason = ("in-band abort probes did not execute, so the fault ran "
+                              "without its guard and was halted early: "
+                              + "; ".join(chaos["probe_errors"]))
+
         expected_alerts = spec.get("expected_alerts") or []
         fired = {name: alerts.first_fired_at(name, fault_injected_at)
                  for name in expected_alerts}

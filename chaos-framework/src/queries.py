@@ -105,10 +105,31 @@ SERVER = {
         '{application="order-api",name="paymentService",state="open"})'
     ),
     # The breaker DOING something, not just changing state: short-circuited calls.
+    #
+    # DEFECT D-E, found by the Phase 7 gate and corrected 30 Aug 2026. This read
+    #     resilience4j_circuitbreaker_calls_total{...,kind="not_permitted"}
+    # and that metric does not exist. Resilience4j's Micrometer binding publishes
+    # `resilience4j_circuitbreaker_calls_seconds_count` with kind in
+    # {successful, failed, ignored} — not_permitted is NOT one of them — and
+    # exports short-circuited calls as a separate counter,
+    # `resilience4j_circuitbreaker_not_permitted_calls_total`.
+    #
+    # The trailing `or vector(0)` is what made this dangerous rather than
+    # obvious. A wrong metric name yields an empty series, `or vector(0)`
+    # rewrites empty as zero, and the invariant reads "the breaker
+    # short-circuited nothing" — a confident wrong answer with evidence
+    # attached, for a breaker that had in fact rejected 21,265 calls. That is
+    # precisely the rule this project states everywhere else: a missing series
+    # is never a passing series.
+    #
+    # `or vector(0)` is gone deliberately, not just moved to the right metric.
+    # This counter is registered the moment the breaker instance exists, so a
+    # genuine zero already arrives as a real sample (rate of an existing counter
+    # is 0). Absence therefore means the pattern is UNOBSERVABLE, and the
+    # correct verdict for an unobservable pattern is INVALID, not zero.
     "cb_payment_not_permitted_rate": (
-        f'sum(rate(resilience4j_circuitbreaker_calls_total'
-        f'{{application="order-api",name="paymentService",kind="not_permitted"}}[{W}]))'
-        f' or vector(0)'
+        f'sum(rate(resilience4j_circuitbreaker_not_permitted_calls_total'
+        f'{{application="order-api",name="paymentService"}}[{W}]))'
     ),
 }
 

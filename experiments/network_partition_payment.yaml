@@ -16,7 +16,18 @@ experiment:
   min_rps_floor: 90
 
   hypothesis:
-    version: 1
+    # v2 (30 Aug 2026): circuit_breaker_opens and breaker_short_circuits were
+    # declared as RECOVERY invariants, which additionally require the signal to
+    # hold through the window's end. That made them unsatisfiable by a correctly
+    # behaving breaker — it opens, then closes once the fault lifts, and a
+    # recovery invariant voids on the later breach. Both are ACTIVATION claims:
+    # the pattern must fire, not stay fired. See engine._check_activation.
+    #
+    # Bumping this version resets the experiment's clean-run count, so it drops
+    # back to an uncharacterised bootstrap entry in ci/gating-experiments.yaml.
+    # That is the rule working: a re-stated hypothesis has not earned the
+    # authority the old one had.
+    version: 2
     description: >
       Under a full partition to payment-service, client availability stays >=95%:
       the first calls burn the 3s timeout (P99 spikes), the circuit breaker on
@@ -37,16 +48,19 @@ experiment:
         metric: cb_payment_open
         comparator: ">="
         threshold: 1                    # state="open" gauge flips to 1
-        recover_within_s: 90            # "breach" starts at t0 (gauge is 0); the
-                                        # breaker must open within 90s of window start
+        activates_within_s: 90          # must REACH 1 within 90s of window start.
+                                        # Not "and stay at 1": a breaker still open
+                                        # at the end of the recovery window is a
+                                        # problem, not a pass.
 
       - name: breaker_short_circuits
         source: prometheus
         metric: cb_payment_not_permitted_rate
         comparator: ">"
         threshold: 0
-        recover_within_s: 90            # proves the breaker DID something, not just
-                                        # that a gauge moved
+        activates_within_s: 90          # proves the breaker DID something, not just
+                                        # that a gauge moved. Same reasoning: calls
+                                        # stop being rejected once it closes again.
 
       - name: no_server_5xx_storm
         source: prometheus

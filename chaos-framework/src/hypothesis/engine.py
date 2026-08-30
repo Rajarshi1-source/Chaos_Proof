@@ -31,6 +31,7 @@ class Invariant:
     threshold: float
     tolerance_s: float | None = None
     recover_within_s: float | None = None
+    activates_within_s: float | None = None
 
     def satisfied(self, value: float) -> bool:
         match self.comparator:
@@ -79,8 +80,12 @@ def evaluate(invariants: list[Invariant], samples: SampleSet,
                 inv.name, "invalid", None, inv.threshold, 0.0,
                 {"reason": f"no samples for {inv.source}/{inv.metric}"}))
             continue
-        outcomes.append(_check_recovery(inv, series) if inv.recover_within_s is not None
-                        else _check_hold(inv, series))
+        if inv.recover_within_s is not None:
+            outcomes.append(_check_recovery(inv, series))
+        elif inv.activates_within_s is not None:
+            outcomes.append(_check_activation(inv, series))
+        else:
+            outcomes.append(_check_hold(inv, series))
 
     if any(o.outcome == "invalid" for o in outcomes):
         return HypothesisVerdict("invalid", outcomes,
@@ -166,6 +171,52 @@ def _check_recovery(inv: Invariant, series: list[tuple[float, float]]) -> Invari
                              "recovered": True})
 
 
+def _check_activation(inv: Invariant, series: list[tuple[float, float]]) -> InvariantOutcome:
+    """Activation: the signal must satisfy its comparator AT LEAST ONCE within
+    `activates_within_s` of the window start. It need not stay satisfied.
+
+    DEFECT D-D, found by the Phase 7 gate. This kind did not exist, so pattern
+    assertions were written as RECOVERY invariants — and recovery additionally
+    requires the signal to hold through the window's end. Applied to a circuit
+    breaker's state gauge that makes it unsatisfiable BY A CORRECTLY BEHAVING
+    BREAKER: the gauge goes 0 -> 1 when the breaker opens, then back to 0 when
+    it closes after the fault, and `_check_recovery` voids a recovery on any
+    later breach. `circuit_breaker_opens` could only have held if the breaker
+    had jammed open forever, which is the failure the pattern exists to avoid.
+
+    The distinction is real and worth the third kind. A resilience pattern is
+    asserted on having ACTIVATED, never on still being active — a breaker that
+    is still open at the end of the recovery window is a problem, not a pass.
+    That is also why the resilience_pattern validator reads its metric as a
+    max_over_time rather than an instant.
+    """
+    worst = None
+    activated_at: float | None = None
+    started = series[0][0]
+
+    for ts, value in series:
+        worst = value if worst is None else inv.worse(worst, value)
+        if activated_at is None and inv.satisfied(value):
+            activated_at = ts
+
+    deadline = inv.activates_within_s or 0.0
+    if activated_at is None:
+        return InvariantOutcome(
+            inv.name, "falsified", worst, inv.threshold,
+            round(series[-1][0] - started, 2),
+            {"kind": "activation", "note": "never activated", "deadline_s": deadline,
+             "samples": len(series)})
+
+    latency = activated_at - started
+    outcome = "held" if latency <= deadline else "falsified"
+    return InvariantOutcome(
+        inv.name, outcome, worst, inv.threshold, round(latency, 2),
+        {"kind": "activation", "deadline_s": deadline,
+         "activated_after_s": round(latency, 2),
+         "note": "activated" if outcome == "held" else "activated late",
+         "samples": len(series)})
+
+
 def parse_abort_conditions(raw: list[dict]) -> list[Invariant]:
     """Abort conditions reuse the Invariant shape but carry NEITHER tolerance_s
     nor recover_within_s: an abort is instantaneous by definition. The watchdog
@@ -182,14 +233,18 @@ def parse_abort_conditions(raw: list[dict]) -> list[Invariant]:
 def parse_invariants(raw: list[dict]) -> list[Invariant]:
     out = []
     for r in raw:
-        if (r.get("tolerance_s") is None) == (r.get("recover_within_s") is None):
+        kinds = [k for k in ("tolerance_s", "recover_within_s", "activates_within_s")
+                 if r.get(k) is not None]
+        if len(kinds) != 1:
             raise ValueError(
                 f"invariant {r.get('name')!r} must declare EXACTLY ONE of "
-                "tolerance_s (hold-throughout) or recover_within_s (recovery) — "
-                "the two kinds must never be conflated")
+                "tolerance_s (hold-throughout), recover_within_s (recovery) or "
+                "activates_within_s (activation) — the three kinds describe "
+                f"different claims and must never be conflated; got {kinds or 'none'}")
         out.append(Invariant(
             name=r["name"], source=r["source"], metric=r["metric"],
             comparator=r["comparator"], threshold=float(r["threshold"]),
             tolerance_s=r.get("tolerance_s"),
-            recover_within_s=r.get("recover_within_s")))
+            recover_within_s=r.get("recover_within_s"),
+            activates_within_s=r.get("activates_within_s")))
     return out

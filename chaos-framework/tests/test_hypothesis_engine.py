@@ -253,3 +253,101 @@ def test_all_held_returns_held_with_no_reason():
     assert isinstance(verdict, HypothesisVerdict)
     assert verdict.verdict == "held"
     assert verdict.reason is None
+
+
+# --------------------------------------------------------------------------- #
+# Activation (defect D-D). A pattern is asserted on having FIRED, never on
+# still being active — the third invariant kind exists because those are
+# different claims and conflating them made the first one unsatisfiable.
+# --------------------------------------------------------------------------- #
+
+def activation(name="circuit_breaker_opens", metric="cb_payment_open",
+               source="prometheus", comparator=">=", threshold=1.0,
+               activates_within_s=90.0) -> Invariant:
+    return Invariant(name, source, metric, comparator, threshold,
+                     activates_within_s=activates_within_s)
+
+
+def test_a_breaker_that_opens_then_closes_holds():
+    """THE regression case. As a recovery invariant this falsified, because
+    recovery voids on any later breach — so a circuit breaker could only pass by
+    jamming open forever, which is the failure the pattern exists to prevent."""
+    ss = make_samples({"client_availability": [1.0] * 6},
+                      {"cb_payment_open": [0, 0, 1, 1, 0, 0]})
+    verdict = evaluate([activation()], ss, VALID, FLOOR)
+    assert verdict.verdict == "held"
+    assert verdict.outcomes[0].evidence["kind"] == "activation"
+    assert verdict.outcomes[0].evidence["activated_after_s"] == pytest.approx(10.0)
+
+
+def test_the_same_series_falsifies_under_recovery_semantics():
+    """Pins the distinction rather than asserting it in a comment: identical
+    samples, opposite verdicts, because the two kinds make different claims."""
+    ss = make_samples({"client_availability": [1.0] * 6},
+                      {"cb_payment_open": [0, 0, 1, 1, 0, 0]})
+    as_recovery = evaluate([recovery("circuit_breaker_opens", "cb_payment_open",
+                                     threshold=1.0, recover_within_s=90.0)],
+                           ss, VALID, FLOOR)
+    assert as_recovery.verdict == "falsified"
+
+
+def test_a_breaker_that_never_opens_is_falsified():
+    """GATE 7's case: @CircuitBreaker removed, so the gauge publishes but never
+    leaves 0."""
+    ss = make_samples({"client_availability": [1.0] * 6},
+                      {"cb_payment_open": [0, 0, 0, 0, 0, 0]})
+    verdict = evaluate([activation()], ss, VALID, FLOOR)
+    assert verdict.verdict == "falsified"
+    assert verdict.outcomes[0].evidence["note"] == "never activated"
+
+
+def test_activating_after_the_deadline_is_falsified():
+    """A breaker that opens two minutes into a sixty-second fault protected
+    nobody. Activation is not 'eventually'."""
+    ss = make_samples({"client_availability": [1.0] * 6},
+                      {"cb_payment_open": [0, 0, 0, 0, 0, 1]})
+    verdict = evaluate([activation(activates_within_s=10.0)], ss, VALID, FLOOR)
+    assert verdict.verdict == "falsified"
+    assert verdict.outcomes[0].evidence["note"] == "activated late"
+
+
+def test_activation_latency_counts_from_the_window_start():
+    """Unlike recovery, which counts from the first breach. An activation
+    invariant has no breach to count from — the signal being at its resting
+    value is the normal state, not a violation."""
+    ss = make_samples({"client_availability": [1.0] * 6},
+                      {"cb_payment_open": [0, 0, 0, 1, 0, 0]})
+    outcome = evaluate([activation()], ss, VALID, FLOOR).outcomes[0]
+    assert outcome.breached_for_s == pytest.approx(15.0)
+
+
+def test_activation_on_the_very_first_sample_holds():
+    ss = make_samples({"client_availability": [1.0] * 3},
+                      {"cb_payment_open": [1, 0, 0]})
+    assert evaluate([activation()], ss, VALID, FLOOR).verdict == "held"
+
+
+def test_a_missing_series_is_still_invalid_for_an_activation_invariant():
+    """The empty-series rule does not get an exception for the new kind."""
+    ss = make_samples({"client_availability": [1.0] * 3},
+                      {"cb_payment_open": [None, None, None]})
+    verdict = evaluate([activation()], ss, VALID, FLOOR)
+    assert verdict.verdict == "invalid"
+
+
+def test_an_invariant_may_declare_only_one_of_the_three_kinds():
+    base = {"name": "x", "source": "k6", "metric": "m", "comparator": ">=", "threshold": 1}
+    for extra in ({"tolerance_s": 5, "activates_within_s": 9},
+                  {"recover_within_s": 5, "activates_within_s": 9},
+                  {"tolerance_s": 5, "recover_within_s": 9, "activates_within_s": 1},
+                  {}):
+        with pytest.raises(ValueError, match="EXACTLY ONE"):
+            parse_invariants([base | extra])
+
+
+def test_activation_is_parsed_from_yaml_shaped_input():
+    inv = parse_invariants([{"name": "circuit_breaker_opens", "source": "prometheus",
+                             "metric": "cb_payment_open", "comparator": ">=",
+                             "threshold": 1, "activates_within_s": 90}])[0]
+    assert inv.activates_within_s == 90
+    assert inv.tolerance_s is None and inv.recover_within_s is None
