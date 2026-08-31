@@ -841,7 +841,7 @@ MAX_BUDGET_BURN_PCT      = 2.0</pre></div>
       <li><strong>The narrator boundary.</strong> <code>TemplateNarrator</code> is the <strong>default</strong> so the system works with no API key and no network — a portfolio project that breaks without a paid API is a liability in a live demo. <code>LLMNarrator</code> is provider-agnostic with the model id from config, its output discarded if it references any number not in the bundle, discards counted in <code>chaosproof_narrator_discards_total</code>. <strong>The LLM never touches a verdict.</strong></li>
     </ul>
   </div>
-  <div class="gate"><span class="gate-label">GATE 11</span><p><code>chaosctl replay &lt;sha&gt;</code> with wifi off produces byte-identical output to the stored bundle. This is demo beat 6.</p></div>
+  <div class="gate"><span class="gate-label">GATE 11</span><p><code>chaosctl replay &lt;sha&gt;</code> with wifi off produces byte-identical output to the stored bundle. This is demo beat 6.</p><p><em>Executed 31 Aug 2026 — <strong>passed.</strong> <code>chaosctl replay &lt;sha&gt;</code> renders byte-identical output with sockets, connections and DNS all disabled at the PROCESS level rather than mocked inside a test; identical across invocations, across short-prefix and full-sha forms, and against the networked run. Building it caught a defect by reading the demo output: the first implementation stored the sealed bundle — including its own <code>bundle_sha256</code> field — while a comment claimed <code>sha256sum</code> matched the filename. It did not, by 64 characters. Storage was changed to make the externally-checkable claim true rather than softening the comment.</em></p><p></p></div>
 </div>
 
 <div class="phase" id="p12">
