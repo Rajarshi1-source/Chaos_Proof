@@ -1,7 +1,8 @@
 {
   "bundle": {
     "abort": null,
-    "bundle_sha256": "1f187594200fe42f156efdfa2dfe68e7bcc15a61233ba1ff4530207150b4dc91",
+    "blast_radius": null,
+    "bundle_sha256": "9ed3aa6d0f44f6ed832660633d034490e95abc56a21aef82ef83a36e01ccc419",
     "chaos_result": null,
     "checks": [
       {
@@ -59,6 +60,7 @@
         "slo_recovery": 0.35
       }
     },
+    "execution_id": null,
     "experiment": "sparse_sample_coverage",
     "git_sha": "4c19ba24c19ba24c19ba24c19ba24c19ba2abcde",
     "hypothesis": {
@@ -85,6 +87,7 @@
       "min_rps_floor": 90.0,
       "version": 1
     },
+    "invariant_outcomes": [],
     "load": {
       "achieved_rps": 119.4,
       "coverage": 0.44,

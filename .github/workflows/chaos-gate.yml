@@ -472,6 +472,45 @@ jobs:
             --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
+      # Attest the EVIDENCE, not only the artifact. A signed image says "this
+      # binary came from this repo"; a signed evidence bundle says "this
+      # resilience claim came from this run, and here is the run". The second
+      # is what the project's argument actually rests on:
+      #
+      #   "A resilience score is a claim about production behaviour. Anyone can
+      #    put a number on a dashboard. Mine comes with a signed evidence
+      #    bundle you can replay offline and get byte-identical output."
+      #
+      # Keyless OIDC throughout: no key material to lose, the CI identity is
+      # the signer. Bundles are content-addressed, so an attestation is bound
+      # to exactly the bytes that get replayed.
+      - name: Attest evidence bundles
+        run: |
+          shopt -s nullglob
+          bundles=(bundles/*.json)
+          if [ ${#bundles[@]} -eq 0 ]; then
+            echo "::notice title=attest::no evidence bundles to attest"
+            exit 0
+          fi
+          # Verify each bundle hashes to its own filename BEFORE signing it.
+          # Putting a signature on a modified bundle would attest to a claim
+          # about a run that did not happen - worse than not signing at all,
+          # because the signature is what makes it believable.
+          for b in "${bundles[@]}"; do
+            name=$(basename "$b" .json)
+            actual=$(sha256sum "$b" | cut -d' ' -f1)
+            if [ "$name" != "$actual" ]; then
+              echo "::error title=attest::$b does not hash to its filename (got $actual)"
+              exit 1
+            fi
+          done
+          echo "${#bundles[@]} bundle(s) verified against their own digests"
+          for b in "${bundles[@]}"; do
+            cosign attest --yes --predicate "$b" \
+              --type https://chaosproof.io/evidence/v1 \
+              "${IMAGE}@${{ steps.build.outputs.digest }}"
+          done
+
       - uses: azure/setup-helm@v5
         with:
           version: v4.2.0

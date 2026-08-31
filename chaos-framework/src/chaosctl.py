@@ -14,6 +14,9 @@ Usage:
     python -m src.chaosctl contracts validate <service> [--run]
     python -m src.chaosctl counterfactual run <experiment> [-n 5]
     python -m src.chaosctl counterfactual report [--metric failed_requests]
+    python -m src.chaosctl replay <sha>            # OFFLINE: no cluster, no network, no DB
+    python -m src.chaosctl audit --verify-bundles
+    python -m src.chaosctl postmortem <sha>
 Env:
     PROM_URL (default http://localhost:19090), TESTRUN (default steady-120rps)
     CHAOSPROOF_DB, CHAOSPROOF_SLACK_WEBHOOK, GITHUB_TOKEN
@@ -301,6 +304,72 @@ def cmd_retro_score(args) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# Phase 11 — offline replay, bundle audit, postmortem.
+# --------------------------------------------------------------------------- #
+
+def cmd_replay(args) -> int:
+    """`chaosctl replay <sha>` — OFFLINE reproduction.
+
+    No cluster, no network, no database. The bundle on disk is the only input.
+    This function deliberately imports nothing that opens a socket, and the
+    output format is stable because it doubles as a golden-file test and the
+    dashboard renders it for the public read-only demo.
+    """
+    from .quality import bundle_store, replay
+
+    try:
+        sha = bundle_store.resolve(args.sha)
+        bundle = bundle_store.read(sha)
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc))
+        return 2
+    except bundle_store.BundleImmutabilityError as exc:
+        print(f"REFUSING TO REPLAY: {exc}")
+        return 3
+
+    print(replay.render(bundle))
+    return 0
+
+
+def cmd_audit(args) -> int:
+    """Re-hash every stored bundle; exit non-zero on any mismatch."""
+    from .quality import bundle_store
+
+    checked, problems = bundle_store.verify_all()
+    if not checked:
+        print("no bundles stored yet")
+        return 0
+    for problem in problems:
+        print(f"  MISMATCH {problem}")
+    if problems:
+        print(f"\nAUDIT: {len(problems)} of {checked} bundles failed verification. "
+              "A bundle that no longer hashes to its own contents has been "
+              "modified, and its replay output describes a run that did not happen.")
+        return 1
+    print(f"AUDIT: {checked} bundle(s), all hash to their own contents.")
+    return 0
+
+
+def cmd_postmortem(args) -> int:
+    from .postmortem import narrator as N
+    from .quality import bundle_store
+
+    try:
+        bundle = bundle_store.read(bundle_store.resolve(args.sha))
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc))
+        return 2
+
+    writer = N.default()
+    draft = writer.draft(bundle)
+    print(draft.render())
+    if draft.discarded:
+        print()
+        print(f"NOTE: an LLM draft was discarded — {draft.discard_reason}")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # Phase 10 — counterfactual pairs.
 # --------------------------------------------------------------------------- #
 
@@ -563,6 +632,19 @@ def main() -> int:
     p_cf_rep = cf_sub.add_parser("report", help="analyse recorded pairs")
     p_cf_rep.add_argument("--metric", default="failed_requests")
     p_cf_rep.set_defaults(func=cmd_counterfactual)
+
+    p_replay = sub.add_parser(
+        "replay", help="offline reproduction from a stored evidence bundle")
+    p_replay.add_argument("sha", help="bundle sha256, or a unique prefix")
+    p_replay.set_defaults(func=cmd_replay)
+
+    p_audit = sub.add_parser("audit", help="re-hash stored evidence bundles")
+    p_audit.add_argument("--verify-bundles", action="store_true", default=True)
+    p_audit.set_defaults(func=cmd_audit)
+
+    p_pm = sub.add_parser("postmortem", help="draft a postmortem from a bundle")
+    p_pm.add_argument("sha")
+    p_pm.set_defaults(func=cmd_postmortem)
     args = parser.parse_args()
     return args.func(args)
 

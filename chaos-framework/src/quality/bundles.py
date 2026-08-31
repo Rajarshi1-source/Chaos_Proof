@@ -75,7 +75,10 @@ def build(*, experiment: str, hypothesis: dict, load: dict, samples: list[dict],
           checks: list[dict], verdict: str, verdict_reason: str | None,
           score: dict | None, epoch: dict, cleanup: list[dict] | None = None,
           git_sha: str | None = None, abort: dict | None = None,
-          preflight: dict | None = None, chaos_result: dict | None = None) -> dict:
+          preflight: dict | None = None, chaos_result: dict | None = None,
+          invariant_outcomes: list[dict] | None = None,
+          blast_radius: dict | None = None,
+          execution_id: int | None = None) -> dict:
     """Assemble and seal. Keyword-only: a bundle assembled from positional
     arguments is one refactor away from silently swapping two fields, and the
     digest would happily hash the wrong thing."""
@@ -94,6 +97,16 @@ def build(*, experiment: str, hypothesis: dict, load: dict, samples: list[dict],
         "abort": abort,
         "preflight": preflight,
         "chaos_result": chaos_result,
+        # PER-INVARIANT outcomes, not one blob. The verdict is the headline; the
+        # outcomes are what makes it checkable, and `chaosctl replay` renders
+        # them line by line.
+        "invariant_outcomes": invariant_outcomes or [],
+        "blast_radius": blast_radius,
+        # The execution id is an INDEX into the evidence store, deliberately not
+        # part of the run's identity in any other sense: the digest is over the
+        # evidence, so two identical runs would hash alike regardless of which
+        # row they happened to land in.
+        "execution_id": execution_id,
         "git_sha": git_sha,
     })
 

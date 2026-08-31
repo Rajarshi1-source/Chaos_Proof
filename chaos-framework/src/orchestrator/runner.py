@@ -38,6 +38,8 @@ from ..safety import flags as flags_mod
 from ..safety import preflight as preflight_mod
 from ..safety import watchdog as watchdog_mod
 from ..safety.lock import FencedLock, LockLost
+from ..quality import bundle_store
+from ..quality import bundles as bundles_mod
 from ..scoring import scorer
 from ..validators import checks as V
 
@@ -236,6 +238,11 @@ def run(spec_path: pathlib.Path, prom_url: str, testrun: str, alertmanager_url: 
         # carries four green rows describing a run that measured nothing.
         check_list = scorer.checks_for_verdict(check_list, verdict.verdict)
         score = scorer.calculate(check_list)
+        # The epoch material, captured so the bundle records what the score
+        # MEANT rather than only what it was. A score without its epoch is the
+        # bare number the whole epoch mechanism exists to prevent.
+        epoch_material = {"epoch_sha256": scorer.epoch_sha256([]),
+                          **scorer.epoch_material([])}
 
         # STAGE 6 — cleanup on the success path too, THEN persist.
         cleanup_log = saga.run()
@@ -257,7 +264,62 @@ def run(spec_path: pathlib.Path, prom_url: str, testrun: str, alertmanager_url: 
                     "evidence": watchdog.evidence} if aborted_by else None),
         )
 
+        # STAGE 6b — the evidence bundle. Built AFTER persistence so it can carry
+        # the execution id, and written to disk content-addressed: the sha256 of
+        # its canonical JSON IS this run's identity. Failing to write it must
+        # not fail the run — the execution is already durable in the evidence
+        # store — but it must be loud, because a run with no bundle cannot be
+        # replayed offline or retro-scored later.
+        bundle_sha = None
+        try:
+            bundle = bundles_mod.build(
+                experiment=spec["name"],
+                hypothesis={"version": spec["hypothesis"]["version"],
+                            "description": spec["hypothesis"]["description"],
+                            "invariants": spec["hypothesis"]["invariants"],
+                            "min_rps_floor": floor,
+                            "abort_conditions": (spec.get("abort_conditions")
+                                                 or spec["hypothesis"].get(
+                                                     "abort_conditions") or [])},
+                load={"tool": "k6", "tool_version": "2.2.0",
+                      "workload_model": "open", "target_rps": 120.0,
+                      "min_rps_floor": floor,
+                      "achieved_rps": facts.achieved_rps,
+                      "dropped_iterations": facts.dropped_iterations,
+                      "coverage": facts.coverage,
+                      "script_sha256": script_sha},
+                samples=bundles_mod.ticks_from_samples(samples),
+                checks=[{"check_type": c.check_type, "check_name": c.check_name,
+                         "applicable": c.applicable, "outcome": c.outcome,
+                         "score": c.score, "expected_value": c.expected_value,
+                         "actual_value": c.actual_value, "message": c.message,
+                         "details": c.details} for c in check_list],
+                invariant_outcomes=[{"name": o.name, "outcome": o.outcome,
+                                     "worst_value": o.worst_value,
+                                     "threshold": o.threshold,
+                                     "breached_for_s": o.breached_for_s,
+                                     "evidence": o.evidence}
+                                    for o in verdict.outcomes],
+                verdict=verdict.verdict, verdict_reason=verdict.reason,
+                score={"score": score.score, "status": score.status,
+                       "weights_denominator": score.weights_denominator,
+                       "excluded": score.excluded, "reason": score.reason},
+                epoch=epoch_material,
+                cleanup=[{"name": st.name, "ok": st.ok} for st in cleanup_log.steps],
+                blast_radius=pre.radius.to_dict() if pre.radius else None,
+                preflight={"decision": "proceed", "evidence": pre.evidence},
+                abort=({"path": aborted_by, "condition": watchdog.evidence.get("condition")}
+                       if aborted_by else None),
+                chaos_result=chaos, git_sha=_git_sha(), execution_id=execution_id)
+            bundle_sha, _path = bundle_store.write(bundle)
+            _index_bundle(execution_id, bundle_sha)
+        except Exception as exc:                                   # noqa: BLE001
+            print(f"WARNING: evidence bundle not written ({type(exc).__name__}: "
+                  f"{exc}). Execution #{execution_id} is recorded but cannot be "
+                  f"replayed offline.")
+
         return {"engine": engine, "verdict": verdict, "execution_id": execution_id,
+                "bundle_sha256": bundle_sha,
                 "facts": facts, "chaos": chaos, "samples": samples,
                 "checks": check_list, "score": score, "preflight": pre,
                 "cleanup": cleanup_log, "aborted_by": aborted_by,
@@ -273,6 +335,21 @@ def run(spec_path: pathlib.Path, prom_url: str, testrun: str, alertmanager_url: 
             except Exception:
                 pass
         lock.release()
+
+
+def _index_bundle(execution_id: int, sha: str) -> None:
+    """Link the execution to its bundle, in its own transaction.
+
+    Separate from the write because the FILE is the source of truth for replay:
+    if this fails the bundle is still on disk and still replayable, and only
+    the convenience lookup is missing.
+    """
+    import psycopg
+
+    from ..db import DSN
+    with psycopg.connect(DSN, connect_timeout=10) as conn, conn.cursor() as cur:
+        bundle_store.index(cur, execution_id, sha)
+        conn.commit()
 
 
 def record_refusal(spec: dict, verdict: str, reason: str, evidence: dict) -> int | None:

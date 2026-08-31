@@ -1,7 +1,8 @@
 {
   "bundle": {
     "abort": null,
-    "bundle_sha256": "0190c97ef22e16cea3ae9541d179d3ca58ae5add3f000950040081d1ed57ee37",
+    "blast_radius": null,
+    "bundle_sha256": "cb7043083a933e1bf0bcd89b64649b564a8ecef0aa0a35080fc9ae925b259fc4",
     "chaos_result": null,
     "checks": [
       {
@@ -59,6 +60,7 @@
         "slo_recovery": 0.35
       }
     },
+    "execution_id": null,
     "experiment": "two_short_breaches_do_not_accumulate",
     "git_sha": "4c19ba24c19ba24c19ba24c19ba24c19ba2abcde",
     "hypothesis": {
@@ -85,6 +87,7 @@
       "min_rps_floor": 90.0,
       "version": 1
     },
+    "invariant_outcomes": [],
     "load": {
       "achieved_rps": 119.4,
       "coverage": 1.0,

@@ -1,0 +1,91 @@
+# The cascade (§18.2). Redis becomes unavailable, forcing inventory-service onto
+# the database; IF database latency actually crosses 200ms we add contention on
+# top, simulating a cache stampede.
+#
+# THE TRIGGER IS CONDITIONAL, NOT A STOPWATCH, and that is the whole design.
+# `db_pressure` fires when the cascade ACTUALLY PROPAGATES, not after a fixed
+# delay. When it does NOT fire within its timeout, that is the most valuable
+# thing this scenario can produce: the stale-cache fallback absorbed the outage
+# completely, proved rather than assumed. A delay-only DAG can never produce
+# that result — it would inject the second fault regardless and then report on a
+# cascade it created itself.
+scenario:
+  name: cache_outage_cascade
+  description: >
+    Redis becomes unavailable, forcing inventory-service onto the database. If DB
+    latency crosses 200ms we additionally add 100ms of network latency,
+    simulating the contention a real cache stampede produces. Tests whether the
+    stale-cache fallback and the DB retry budget together prevent a user-visible
+    outage.
+
+  hypothesis:
+    description: >
+      The system degrades gracefully: client availability stays >=97% and P99
+      stays under 1500ms throughout, because inventory-service serves stale
+      catalogue data and order-api's bulkhead prevents thread-pool exhaustion
+      from spreading.
+    invariants:
+      - name: availability
+        source: k6
+        metric: client_availability
+        comparator: ">="
+        threshold: 0.97
+        tolerance_s: 20
+      - name: p99
+        source: k6
+        metric: client_p99_ms
+        comparator: "<="
+        threshold: 1500
+        tolerance_s: 30
+      - name: no_thread_pool_exhaustion
+        source: prometheus
+        metric: bulkhead_available_calls
+        comparator: ">"
+        threshold: 0
+        # ZERO tolerance. Thread-pool exhaustion IS the cascade: the moment it
+        # happens the failure has stopped being contained and started spreading,
+        # so there is no budget for it to be briefly true.
+        tolerance_s: 0
+
+  stages:
+    - id: kill_cache
+      at: 0s
+      fault: pod-delete
+      target: { app: redis, namespace: target-app }
+
+    - id: db_pressure
+      after: kill_cache
+      trigger:
+        # Needs D-I's `db_query_seconds` histogram on inventory-service.
+        promql: histogram_quantile(0.99, sum(rate(db_query_seconds_bucket[30s])) by (le))
+        comparator: ">"
+        threshold: 0.200
+        # If it never trips: "cascade did not propagate" — recorded as a
+        # finding, not as a timeout error.
+        timeout_s: 90
+      fault: pod-network-latency
+      target: { app: inventory-service, namespace: target-app }
+      params: { NETWORK_LATENCY: "100" }
+
+    - id: observe_only
+      after: db_pressure
+      duration: 60s
+      # Retry storms and queue growth appear AFTER injection stops. A
+      # fault-then-immediately-validate loop misses them entirely, so this stage
+      # watches amplification without adding to it.
+      fault: none
+
+  # A DAG multiplies blast radius, so the abort path is the non-trivial one.
+  # Aborting stage 2 while stage 1 is active halts BOTH, and cleanup runs stage
+  # teardowns in reverse dependency order.
+  abort_conditions:
+    - name: total_collapse
+      source: k6
+      metric: client_availability
+      comparator: "<"
+      threshold: 0.70
+    - name: cascade_escaped
+      source: prometheus
+      metric: other_namespace_5xx_rate
+      comparator: ">"
+      threshold: 0.5

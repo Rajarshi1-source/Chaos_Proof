@@ -7,7 +7,8 @@
       "path": "python_watchdog",
       "threshold": 0.8
     },
-    "bundle_sha256": "89f93b23d717b33c6ab45e817c5de144e84474336395a37c65edbd9d3de926a1",
+    "blast_radius": null,
+    "bundle_sha256": "b9fc56dc72a59bd4bcf5592c4e842413594840c3c92af89193190b6f073e60d1",
     "chaos_result": null,
     "checks": [
       {
@@ -69,6 +70,7 @@
         "slo_recovery": 0.35
       }
     },
+    "execution_id": null,
     "experiment": "abort_mid_experiment",
     "git_sha": "4c19ba24c19ba24c19ba24c19ba24c19ba2abcde",
     "hypothesis": {
@@ -95,6 +97,7 @@
       "min_rps_floor": 90.0,
       "version": 1
     },
+    "invariant_outcomes": [],
     "load": {
       "achieved_rps": 119.4,
       "coverage": 1.0,
