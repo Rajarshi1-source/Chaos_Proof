@@ -134,6 +134,43 @@ SERVER = {
 }
 
 
+# --- contract observation queries (Phase 9, §19.2) -----------------------------
+# `does_not_inflict` clauses are consumer-side promises about LOAD, not faults.
+# Nothing is injected to check them; they are observed during any experiment.
+#
+# NOTE ON ATTRIBUTION: inbound rate at the dependency is the total from ALL
+# consumers, and in this system order-api is the only consumer of both
+# payment-service and inventory-service — so total inbound IS what order-api
+# inflicts. In a system with several consumers this would over-attribute, and
+# the honest fix is a per-caller label rather than a quieter query.
+CONTRACT = {
+    "dependency_request_rate": (
+        'sum(rate(http_server_requests_seconds_count'
+        '{namespace="$TARGET_NS",job="$DEPENDENCY"}[$W]))'
+    ),
+    # Retry amplification, as a rate. This is the mechanism that pushes the
+    # offered rate above what the consumer promised.
+    "retried_calls_rate": (
+        'sum(rate(resilience4j_retry_calls_total'
+        '{application="$CONSUMER",kind="successful_with_retry"}[$W]))'
+        ' or vector(0)'
+    ),
+}
+
+
+def contract_queries(dependency: str, consumer: str, target_ns: str = "target-app",
+                     window: str = "1m") -> dict[str, str]:
+    """A 1m window by default rather than the 30s SLI window: this measures
+    offered LOAD, which is compared against a sustained-rate promise, not
+    against a latency SLO. Widening it here is legitimate for the same reason
+    widening an SLI window is not — the thing being compared is different."""
+    return {k: (v.replace("$TARGET_NS", target_ns)
+                 .replace("$DEPENDENCY", dependency)
+                 .replace("$CONSUMER", consumer)
+                 .replace("$W", window))
+            for k, v in CONTRACT.items()}
+
+
 # --- target-scoped server queries (experiments 4-6) ----------------------------
 # Parameterised by the experiment's target deployment. Every one of these is
 # sampled every tick and becomes evidence, whether or not an invariant reads it.

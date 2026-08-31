@@ -188,16 +188,26 @@ jobs:
           cache: pip
       - run: pip install -e "./chaos-framework[test]"
 
+      # Landed in Phase 9; the existence guard is gone because the module is
+      # real. A guarded step that silently passes is indistinguishable from a
+      # gate that ran and found nothing.
       - name: Resilience contract diff
         working-directory: chaos-framework
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python -m src.contracts.diff --base "${{ github.base_ref || 'main' }}" --comment
+
+      # Coverage is reported on every PR, not only when a contract changes. A
+      # clause nobody can falsify does not announce itself; it just quietly
+      # stays untested, which is the failure mode `UNTESTED` exists to prevent.
+      - name: Contract clause coverage
+        working-directory: chaos-framework
         run: |
-          if [ -f src/contracts/diff.py ]; then
-            python -m src.contracts.diff --base "${{ github.base_ref || 'main' }}"
-          else
-            echo "::warning title=contract-gate::src/contracts/diff.py is not present yet (Phase 9). Contract weakenings are NOT being surfaced on this PR."
-          fi
+          for svc in order-api payment-service inventory-service; do
+            python -m src.chaosctl contracts validate "$svc" --metrics
+            echo
+          done
 
   # ==========================================================================
   # 4. chaos-gate — the headline. Real kind cluster, real faults, REAL LOAD.

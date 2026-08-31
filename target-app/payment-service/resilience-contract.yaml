@@ -1,0 +1,26 @@
+# payment-service's resilience contract (§19).
+#
+# A leaf service: it has no downstream dependencies of its own in this system,
+# so `tolerates` is deliberately empty. That is a meaningful statement rather
+# than an omission — it says every failure this service exhibits originates
+# here, and the generator therefore emits no fault experiments against its
+# dependencies. An empty list and a missing key are different claims.
+service: payment-service
+version: 1.0.0
+owners: ["@payment-owners"]
+
+provides:
+  availability_slo: 99.0
+  latency_p99_ms: 300
+  graceful_degradation_modes: []
+
+tolerates: []
+
+# What consumers may rely on this service NOT doing to them. order-api's
+# contract claims it absorbs 5% errors from here; this side of the pair states
+# what payment-service believes it emits.
+does_not_inflict:
+  - clause: "error rate > 1% under normal operation"
+    metric: own_error_rate_pct
+    comparator: "<="
+    threshold: 1

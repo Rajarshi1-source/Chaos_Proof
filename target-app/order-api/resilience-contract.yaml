@@ -1,0 +1,83 @@
+# order-api's resilience contract (§19).
+#
+# Consumer-driven contract testing (Pact) applied to FAILURE rather than to
+# schemas. `order-api` depends on `payment-service` and `inventory-service`, but
+# nowhere else is it written what tolerance each expects from the other — so
+# when payment-service gets slow, whose bug is it? This file makes the
+# assumption explicit AND testable: ChaosProof generates one experiment per
+# clause, so the suite is derived from declared architecture rather than from a
+# human remembering to write a test.
+#
+# THESE NUMBERS ARE CLAIMS, NOT MEASUREMENTS. They are what this service
+# promises and what it believes it absorbs. The generated experiments exist to
+# falsify them, and a clause that turns out to be wrong is the point of the
+# exercise rather than a failure of it.
+service: order-api
+version: 1.2.0
+owners: ["@order-api-owners"]
+
+# What I promise my consumers.
+provides:
+  availability_slo: 99.5
+  latency_p99_ms: 500
+  graceful_degradation_modes:
+    - "stale-inventory-data-on-cache-miss (max staleness 60s)"
+    - "queued-payment-on-payment-svc-failure (max queue depth 1000)"
+
+# What I absorb from my dependencies.
+tolerates:
+  - dependency: payment-service
+    max_latency_ms: 800
+    max_error_rate_pct: 5
+    max_outage_seconds: 120
+    # The circuit breaker `paymentService` plus its queued fallback is the
+    # mechanism this clause relies on. Named here so a violation can point at
+    # the pattern that was supposed to absorb it.
+    absorbed_by: "circuitbreaker:paymentService + fallback:queuedFallback"
+
+  - dependency: inventory-service
+    max_latency_ms: 1000
+    max_error_rate_pct: 10
+    max_outage_seconds: 300
+    absorbed_by: "retry:inventoryService(maxAttempts=3) + fallback:unknownStockFallback"
+    # DECLARED AMPLIFICATION. The cross-cutting rule is "never add retry without
+    # accounting for amplification in the contract", so it is accounted for
+    # here rather than discovered in production:
+    #
+    #   attempts       3          (resilience4j retry.instances.inventoryService)
+    #   wait_ms      500          between attempts
+    #   read timeout  3000 ms     (HttpConfig, global)
+    #
+    # Two consequences the generator checks separately, because they fail in
+    # different dimensions:
+    #   * REQUEST amplification: retries multiply offered load on the dependency.
+    #     Worst case is `attempts` x the arrival rate, which is what
+    #     `does_not_inflict` below has to survive.
+    #   * LATENCY amplification: a logical call that exhausts its attempts costs
+    #     up to attempts x timeout + (attempts-1) x wait = 10000 ms, which is 20x
+    #     the 500 ms this service publishes in `provides`.
+    retry_amplification:
+      attempts: 3
+      wait_ms: 500
+      # P(at least one attempt fails) at the declared 10% error rate:
+      #   1 - (1 - 0.10)^3 = 27.1%
+      # This is the number the naive clause above ignores, and the reason a
+      # 10% tolerance is not the same thing as a 10% observed error rate.
+      effective_error_rate_pct_at_max: 27.1
+      worst_case_latency_ms: 10000
+
+  - dependency: redis
+    max_outage_seconds: 600
+    absorbed_by: "stale-cache read path"
+
+# Consumer-side guarantees: what I promise NOT to do to my dependencies.
+# Retry amplification is a load-inflicting behaviour, so it is checked here.
+does_not_inflict:
+  - clause: "request rate > 100 rps on any single dependency"
+    metric: dependency_request_rate
+    comparator: "<="
+    threshold: 100
+  - clause: "concurrent connections > 50 per dependency"
+    metric: dependency_concurrent_connections
+    comparator: "<="
+    threshold: 50

@@ -1,0 +1,34 @@
+# inventory-service's resilience contract (§19).
+#
+# Depends on PostgreSQL and its own cache. The cache read path is what makes the
+# `tolerates postgres` clause survivable, and it is named so a violation points
+# at the mechanism that was supposed to absorb it.
+service: inventory-service
+version: 1.0.0
+owners: ["@inventory-owners"]
+
+provides:
+  availability_slo: 99.0
+  latency_p99_ms: 400
+  graceful_degradation_modes:
+    - "stale-cache-read-on-db-failure (max staleness 60s)"
+
+tolerates:
+  - dependency: postgres
+    max_latency_ms: 1000
+    max_error_rate_pct: 5
+    max_outage_seconds: 300
+    absorbed_by: "stale-cache read path (CacheReader)"
+    # Stateful targets are DENIED by policy/chaos_safety.yaml
+    # (deny-stateful-targets: the blast-radius model assumes a replaceable
+    # replica and cannot reason about data loss). So this clause is
+    # structurally UNTESTABLE by fault injection here, and the generator marks
+    # it UNTESTED rather than silently omitting it. A gap that is visible is a
+    # gap someone can argue about; an invisible one is just a hole.
+    untestable_reason: "postgres is a stateful target; policy denies injecting into it"
+
+does_not_inflict:
+  - clause: "request rate > 200 rps on postgres"
+    metric: dependency_request_rate
+    comparator: "<="
+    threshold: 200

@@ -10,6 +10,8 @@ Usage:
     python -m src.chaosctl flakiness [--experiment X] [--apply]
     python -m src.chaosctl epoch [--show | --open --reason "..."]
     python -m src.chaosctl retro-score --last N --reason "..." [--apply]
+    python -m src.chaosctl contracts generate [--service X] [--write]
+    python -m src.chaosctl contracts validate <service> [--run]
 Env:
     PROM_URL (default http://localhost:19090), TESTRUN (default steady-120rps)
     CHAOSPROOF_DB, CHAOSPROOF_SLACK_WEBHOOK, GITHUB_TOKEN
@@ -41,7 +43,7 @@ EXIT_CODES = {"held": 0, "falsified": 1, "invalid": 2,
 
 
 def _resolve(name: str) -> pathlib.Path:
-    for path in sorted(EXPERIMENTS_DIR.glob("*.yaml")):
+    for path in sorted(EXPERIMENTS_DIR.rglob("*.yaml")):
         spec = yaml.safe_load(path.read_text())["experiment"]
         if spec["name"] == name:
             return path
@@ -51,7 +53,7 @@ def _resolve(name: str) -> pathlib.Path:
 
 def cmd_list(_args) -> int:
     print(f"{'NAME':32} {'FAULT':22} {'FLOOR':>6}  HYPOTHESIS")
-    for path in sorted(EXPERIMENTS_DIR.glob("*.yaml")):
+    for path in sorted(EXPERIMENTS_DIR.rglob("*.yaml")):
         spec = yaml.safe_load(path.read_text())["experiment"]
         print(f"{spec['name']:32} {spec['litmus_fault']:22} "
               f"{spec['min_rps_floor']:>6.0f}  v{spec['hypothesis']['version']} "
@@ -166,7 +168,7 @@ def _connect():
 
 def _all_experiment_names() -> list[str]:
     return sorted(yaml.safe_load(path.read_text())["experiment"]["name"]
-                  for path in EXPERIMENTS_DIR.glob("*.yaml"))
+                  for path in EXPERIMENTS_DIR.rglob("*.yaml"))
 
 
 def cmd_flakiness(args) -> int:
@@ -295,6 +297,67 @@ def cmd_retro_score(args) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# Phase 9 — resilience contracts.
+# --------------------------------------------------------------------------- #
+
+def cmd_contracts(args) -> int:
+    from .contracts import generator, model, validate
+
+    if args.contracts_command == "generate":
+        contracts = ([model.for_service(args.service)] if args.service
+                     else model.load_all())
+        for contract in contracts:
+            gen = generator.generate(contract)
+            tested, total, ratio = generator.coverage(gen)
+            print(f"{contract.service} v{contract.version}  "
+                  f"{tested}/{total} clauses falsifiable ({ratio:.0%})")
+            for g in gen:
+                mark = " " if g.testable else "-"
+                note = "" if g.testable else f"   UNTESTABLE: {g.untested_reason}"
+                kind = ("observation" if g.spec.get("observation_only")
+                        else g.spec.get("litmus_fault", ""))
+                print(f"  {mark} {g.provenance.clause:52} {kind:22}{note}")
+            if args.write:
+                written = validate.write_generated(contract, gen)
+                print(f"    wrote {len(written)} experiment file(s) to "
+                      f"experiments/generated/")
+            print(f"    {generator.gating_note()}")
+            print()
+        return 0
+
+    # validate
+    contract = model.for_service(args.service)
+    gen = generator.generate(contract)
+    outcomes = {}
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            if args.backfill:
+                done = validate.backfill(cur, contract, gen)
+                conn.commit()
+                print(f"backfilled {len(done)} clause outcome(s) from stored runs")
+                print()
+            outcomes = validate.load_recorded(cur, contract)
+    except Exception as exc:                                       # noqa: BLE001
+        print(f"note: evidence store unreachable ({type(exc).__name__}); "
+              "reporting declared clauses with no recorded outcomes")
+
+    if args.observe:
+        # does_not_inflict clauses are about LOAD, not faults: nothing is
+        # injected, they are measured against live Prometheus.
+        from .integrations.prometheus import PrometheusClient
+        prom = PrometheusClient(os.environ.get("PROM_URL", "http://localhost:19090"))
+        outcomes.update(validate.observe_inflict_clauses(
+            prom, contract, generator.generate(contract)))
+
+    rep = validate.report_for(contract, outcomes, epoch=validate.current_epoch_sha())
+    print(rep.render())
+    if args.metrics:
+        print()
+        print(rep.prometheus_metrics())
+    return 0
+
+
 def _score(v) -> str:
     return "none" if v is None else f"{v:.4f}"
 
@@ -340,6 +403,29 @@ def main() -> int:
     p_retro.add_argument("--apply", action="store_true",
                          help="persist. Without it this is a dry run.")
     p_retro.set_defaults(func=cmd_retro_score)
+
+    p_con = sub.add_parser("contracts", help="resilience contracts (§19)")
+    con_sub = p_con.add_subparsers(dest="contracts_command", required=True)
+
+    p_gen = con_sub.add_parser(
+        "generate", help="emit one experiment per tolerates clause")
+    p_gen.add_argument("--service")
+    p_gen.add_argument("--write", action="store_true",
+                       help="materialise experiments into experiments/generated/")
+    p_gen.set_defaults(func=cmd_contracts)
+
+    p_val = con_sub.add_parser(
+        "validate", help="report HONOURED / VIOLATED / UNTESTED per clause")
+    p_val.add_argument("service")
+    p_val.add_argument("--metrics", action="store_true",
+                       help="also print the Prometheus exposition text")
+    p_val.add_argument("--backfill", action="store_true",
+                       help="re-derive clause outcomes from stored sli_samples "
+                            "for generated experiments that already ran")
+    p_val.add_argument("--observe", action="store_true",
+                       help="measure does_not_inflict clauses against live "
+                            "Prometheus (needs PROM_URL)")
+    p_val.set_defaults(func=cmd_contracts)
     args = parser.parse_args()
     return args.func(args)
 

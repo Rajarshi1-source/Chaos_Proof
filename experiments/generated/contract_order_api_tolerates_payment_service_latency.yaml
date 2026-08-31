@@ -1,0 +1,56 @@
+# GENERATED FROM A RESILIENCE CONTRACT - DO NOT EDIT BY HAND.
+# source: D:\New Projects\Chaos_Proof\target-app\order-api\resilience-contract.yaml
+# clause: tolerates.payment-service.max_latency_ms
+# regenerate: python -m src.chaosctl contracts generate --service order-api --write
+#
+# Advisory by construction: a generated experiment has no flakiness
+# history, so it cannot gate a merge until it earns that over 20
+# clean runs. Generation is not characterisation.
+experiment:
+  name: contract_order_api_tolerates_payment_service_latency
+  litmus_fault: pod-network-latency
+  target:
+    namespace: target-app
+    app: payment-service
+  fault_duration_s: 60
+  recovery_window_s: 120
+  params:
+    NETWORK_LATENCY: '800'
+  load_profile: profiles/steady_120rps.js
+  min_rps_floor: 90.0
+  generated: true
+  gating: false
+  hypothesis:
+    version: 1
+    description: order-api claims it tolerates 800ms from payment-service; with exactly
+      that latency injected, its own published P99 of 500ms must still hold.
+    invariants:
+    - name: consumer_p99_holds
+      source: k6
+      metric: client_p99_ms
+      comparator: <=
+      threshold: 500
+      tolerance_s: 15
+    - name: consumer_availability_holds
+      source: k6
+      metric: client_availability
+      comparator: '>='
+      threshold: 0.995
+      tolerance_s: 15
+    abort_conditions:
+    - name: availability_collapse
+      source: k6
+      metric: client_availability
+      comparator: <
+      threshold: 0.8
+    - name: unrelated_namespace_impact
+      source: prometheus
+      metric: other_namespace_5xx_rate
+      comparator: '>'
+      threshold: 0.5
+  provenance:
+    service: order-api
+    contract_version: 1.2.0
+    clause: tolerates.payment-service.max_latency_ms
+    declared: 800.0
+    absorbed_by: circuitbreaker:paymentService + fallback:queuedFallback

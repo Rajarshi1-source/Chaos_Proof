@@ -338,7 +338,7 @@ def diagnose(verdict) -> str:
 # --------------------------------------------------------------------------- #
 
 def _resolve(name: str) -> pathlib.Path:
-    for path in sorted(EXPERIMENTS_DIR.glob("*.yaml")):
+    for path in sorted(EXPERIMENTS_DIR.rglob("*.yaml")):
         spec = yaml.safe_load(path.read_text())["experiment"]
         if spec["name"] == name:
             return path
