@@ -14,7 +14,7 @@ EVIDENCE_PORT    := 5433
 POSTGRES_IMAGE   := postgres:18.6-alpine
 SERVICES         := order-api payment-service inventory-service
 
-.PHONY: bootstrap kind-up evidence-up evidence-backup target-app load load-stop experiment score unit ci-gate dashboard kind-down
+.PHONY: bootstrap kind-up evidence-up evidence-backup target-app load load-stop experiment score unit ci-gate dashboard dashboard-dev dashboard-verify bisect kind-down
 
 bootstrap:      ## Everything from nothing: cluster + platform + evidence store + app + load
 	$(MAKE) kind-up
@@ -98,9 +98,18 @@ load-stop:      ## Stop the load plane (the INVALID demo starts here)
 experiment:     ## make experiment NAME=pod_kill_payment_svc
 	cd chaos-framework && python -m src.chaosctl run $(NAME)
 
-dashboard:      ## Next.js dashboard at :3000 (Phase 6)
-	@echo "[stub] Phase 6: cd dashboard && npm run dev"
-	@exit 1
+bisect:         ## make bisect NAME=pod_kill_payment_svc GOOD=<sha> BAD=<sha>  (prints the cost, runs nothing)
+	cd chaos-framework && python -m src.chaosctl bisect $(NAME) --good $(GOOD) --bad $(BAD) --estimate
+
+dashboard:      ## Next.js dashboard at :3000. READ_ONLY=false for the internal build.
+	cd dashboard && npm install --silent && READ_ONLY=$${READ_ONLY:-true} npm run build && npm start
+
+dashboard-dev:  ## Dashboard in dev mode, internal build (trigger controls present)
+	cd dashboard && npm install --silent && READ_ONLY=false npm run dev
+
+dashboard-verify: ## Prove the read-only build has NO trigger surface - and that the check can fail
+	cd dashboard && READ_ONLY=false npm run build && npm run verify:internal
+	cd dashboard && READ_ONLY=true  npm run build && npm run verify:readonly
 
 kind-down:
 	kind delete cluster --name $(CLUSTER)

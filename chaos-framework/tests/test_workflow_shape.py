@@ -127,14 +127,44 @@ def test_selected_experiments_include_at_least_one_gating_experiment(chaos_gate)
 # Job shape and dependencies
 # --------------------------------------------------------------------------- #
 
-def test_the_five_jobs_of_the_plan_shape_exist(workflow):
+def test_the_jobs_of_the_plan_shape_exist(workflow):
+    """The plan's §21.5 shape was five jobs:
+
+        unit -> replay-eval -> contract-gate -> chaos-gate -> build-sign-deploy
+
+    Phase 12 adds a sixth, `public-build`, for the two-tier deploy the plan
+    asks for in the same phase. It is asserted here rather than left implicit
+    because a job that silently stops existing is a gate that silently stops
+    gating — which is the failure mode this whole file exists to catch.
+    """
     assert set(workflow["jobs"]) == {
-        "unit", "replay-eval", "contract-gate", "chaos-gate", "build-sign-deploy"}
+        "unit", "replay-eval", "contract-gate", "public-build", "chaos-gate",
+        "build-sign-deploy"}
 
 
-def test_build_sign_deploy_needs_all_four_gates(workflow):
+def test_build_sign_deploy_needs_every_gate(workflow):
+    """Including `public-build`. Publishing an image whose dashboard ships the
+    trigger surface is the exact thing the two-tier build exists to prevent, so
+    the deploy job must not be reachable without it."""
     assert set(workflow["jobs"]["build-sign-deploy"]["needs"]) == {
-        "unit", "replay-eval", "contract-gate", "chaos-gate"}
+        "unit", "replay-eval", "contract-gate", "public-build", "chaos-gate"}
+
+
+def test_the_public_build_verifies_both_directions(workflow):
+    """A grep for "no trigger surface" passes trivially against a misspelled
+    marker, a wrong directory, or the residue of a failed build. Verifying that
+    the INTERNAL build contains the surface is what makes the read-only check
+    capable of failing — without it the gate is decorative."""
+    steps = workflow["jobs"]["public-build"]["steps"]
+    runs = " ".join(str(s.get("run", "")) for s in steps)
+    assert "verify:internal" in runs
+    assert "verify:readonly" in runs
+
+
+def test_the_public_build_does_not_need_the_cluster(workflow):
+    """It is a bundler assertion, not a chaos experiment. Making it wait on the
+    kind cluster would put a one-minute check behind a thirty-minute one."""
+    assert "needs" not in workflow["jobs"]["public-build"]
 
 
 def test_the_fast_gates_do_not_depend_on_the_cluster(workflow):

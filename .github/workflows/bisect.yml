@@ -1,0 +1,167 @@
+# Regression bisection (§20) — ON DEMAND ONLY.
+#
+# There is deliberately no `schedule:` and no trigger on a score dip. §20.3's
+# scaling decision rejected automatic bisection:
+#
+#   Option A — bisect on every score regression, automatically. REJECTED. Each
+#   candidate costs reps x ~6 minutes; a 40-commit range needs log2(40) = 6 of
+#   them, so ~90 minutes of EXCLUSIVE cluster time. A 90-minute cluster-
+#   monopolising job triggered by noise is a denial of service against the daily
+#   chaos schedule — and this project has already demonstrated that score dips
+#   are sometimes noise, which is the whole reason flakiness quarantine exists.
+#
+#   Option B — on demand, with the cost shown before starting, a hard candidate
+#   cap, and a nightly window. CHOSEN. The Slack message reporting a regression
+#   carries a button reading "Bisect (est. 6 candidates, ~90 min)" that links
+#   HERE, to this form. A human decides.
+#
+# The button is a URL button, not an interactive Block Kit action, and this
+# workflow is why that works. GitHub's dispatch form already authenticates the
+# person, records who ran it, and shows the inputs before anything starts.
+# Accepting an interactive Slack action instead would make ChaosProof an inbound
+# HTTP endpoint needing signature verification, a replay window and a rotating
+# secret — a security surface added so a click could skip one page load.
+# ChaosProof is otherwise a net consumer of Prometheus and Alertmanager and
+# receives no inbound webhooks at all. That property is worth more than the click.
+#
+# The `estimate` job runs first and always. It needs no cluster and finishes in
+# seconds, so an unaffordable or non-separable request is refused before a
+# runner is ever provisioned.
+
+name: bisect
+
+on:
+  workflow_dispatch:
+    inputs:
+      experiment:
+        description: "Experiment to replay at each candidate"
+        required: true
+        default: pod_kill_payment_svc
+      good:
+        description: "Last known-good commit"
+        required: true
+      bad:
+        description: "First known-bad commit"
+        required: true
+      reps:
+        description: "Repetitions per candidate (blank = derive from sigma). Setting this LOWER than the derived value is how a bisection converges on noise."
+        required: false
+        default: ""
+      now:
+        description: "Run outside the 01:00-05:00 window (recorded on the row)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # One bisection at a time, cluster-wide, and NEVER cancel one in flight: a
+  # half-finished binary search has spent the cluster time and learned nothing.
+  # `cancel-in-progress: false` is the opposite of chaos-gate's setting and the
+  # difference is deliberate — a superseded PR check is worth cancelling, an
+  # hour of consumed cluster night is not.
+  group: bisect-cluster
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.14"
+
+jobs:
+  # ---------------------------------------------------------------------- #
+  # Hermetic. No cluster, no database needed when scores are supplied; this is
+  # the job that turns an unaffordable request into a refusal in ~20 seconds
+  # instead of an hour and a half.
+  # ---------------------------------------------------------------------- #
+  estimate:
+    name: cost estimate and separability
+    runs-on: ubuntu-latest
+    outputs:
+      affordable: ${{ steps.est.outputs.affordable }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The full history, or `git rev-list good..bad` cannot see the range.
+          # A shallow clone here fails with "not a descendant", which reads like
+          # the arguments were the wrong way round.
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -e "chaos-framework[test]"
+
+      - id: est
+        name: Print the cost before incurring it
+        working-directory: chaos-framework
+        env:
+          CHAOSPROOF_DB: ${{ secrets.CHAOSPROOF_DB }}
+        run: |
+          set -o pipefail
+          python -m src.chaosctl bisect "${{ inputs.experiment }}" \
+            --good "${{ inputs.good }}" --bad "${{ inputs.bad }}" \
+            ${{ inputs.reps && format('--reps {0}', inputs.reps) || '' }} \
+            --estimate | tee estimate.txt
+          echo "affordable=true" >> "$GITHUB_OUTPUT"
+
+      - name: Summarise
+        if: always()
+        working-directory: chaos-framework
+        run: |
+          {
+            echo "### Bisection request"
+            echo '```'
+            cat estimate.txt 2>/dev/null || echo "refused before an estimate could be produced"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------- #
+  # The search. Needs a cluster it can have to itself for the whole window.
+  # ---------------------------------------------------------------------- #
+  search:
+    name: bisect
+    needs: estimate
+    # The same self-hosted runner class the chaos gate uses. On the default
+    # GitHub runner this job would exceed the 6-hour limit on a wide range and,
+    # worse, would be sharing a node with whatever else is scheduled — which
+    # confounds every score it measures.
+    runs-on: ${{ vars.CHAOS_GATE_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 300      # the 240-minute window plus setup
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -e "chaos-framework[test]"
+
+      - name: Bring up the cluster and the load plane
+        run: |
+          make kind-up
+          make load          # LOAD FIRST, before any experiment. Always.
+
+      - name: Search
+        working-directory: chaos-framework
+        env:
+          CHAOSPROOF_DB: ${{ secrets.CHAOSPROOF_DB }}
+          CHAOSPROOF_SLACK_WEBHOOK: ${{ secrets.CHAOSPROOF_SLACK_WEBHOOK }}
+        run: |
+          set -o pipefail
+          # Exit 1 is `abandoned` and exit 2 is `refused`. Neither is a workflow
+          # failure — they are the results this feature exists to produce, and a
+          # red X on an honest abandonment teaches people to stop reading them.
+          python -m src.chaosctl bisect "${{ inputs.experiment }}" \
+            --good "${{ inputs.good }}" --bad "${{ inputs.bad }}" \
+            ${{ inputs.reps && format('--reps {0}', inputs.reps) || '' }} \
+            ${{ inputs.now && '--now' || '' }} \
+            --apply | tee result.txt || true
+          {
+            echo "### Result"
+            echo '```'
+            cat result.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tear down
+        if: always()
+        run: make kind-down || true

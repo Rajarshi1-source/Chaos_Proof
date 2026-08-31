@@ -2,7 +2,9 @@ import { ScoreTrendChart } from '@/components/dashboard/ScoreTrendChart';
 import { ValidityStrip } from '@/components/dashboard/ValidityStrip';
 import { CounterfactualPanel } from '@/components/dashboard/CounterfactualPanel';
 import { VerdictBadge, toVerdict } from '@/components/common/VerdictBadge';
+import { TriggerPanel } from '@/components/controls/TriggerPanel';
 import { fetchJson } from '@/lib/api';
+import { READ_ONLY } from '@/lib/buildFlags';
 import type { CounterfactualResponse, TrendResponse, ValidityPoint } from '@/types';
 
 interface ScoreResponse {
@@ -30,6 +32,24 @@ interface ExecutionRow {
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * The internal build's trigger targets. Blast scores are the pre-flight
+ * arithmetic's own numbers, shown so the control says what it is about to
+ * affect BEFORE it composes a command.
+ *
+ * In the read-only build `TriggerPanel` resolves to a stub that renders
+ * nothing, and this array is never reached because the branch below
+ * constant-folds away.
+ */
+const TRIGGER_TARGETS = [
+  { name: 'pod_kill_payment_svc', gating: false, blastScore: 61, namespace: 'target-app' },
+  { name: 'network_latency_payment', gating: false, blastScore: 61, namespace: 'target-app' },
+  { name: 'network_partition_payment', gating: false, blastScore: 61, namespace: 'target-app' },
+  { name: 'disk_fill_inventory', gating: false, blastScore: 61, namespace: 'target-app' },
+  { name: 'cpu_spike_payment', gating: false, blastScore: 61, namespace: 'target-app' },
+  { name: 'container_kill_payment', gating: false, blastScore: 61, namespace: 'target-app' },
+];
+
 function ErrorPanel({ what, message }: { what: string; message: string }) {
   return (
     <div className="card" style={{ padding: 16, borderColor: 'var(--verdict-error)' }}>
@@ -55,6 +75,10 @@ export default async function Page() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Absent from the public build at BUILD TIME — the module is aliased to a
+          stub in next.config.ts and this branch constant-folds away. */}
+      {READ_ONLY ? null : <TriggerPanel targets={TRIGGER_TARGETS} />}
+
       {/* A score is NEVER rendered without its epoch. A bare number invites
           exactly the comparison that scoring epochs exist to prevent. */}
       {score.error ? (

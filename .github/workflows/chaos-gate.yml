@@ -210,6 +210,46 @@ jobs:
           done
 
   # ==========================================================================
+  # 3b. public-build — the two-tier deploy gate. Hermetic, ~1 minute.
+  #
+  # Asserts that the READ-ONLY build contains no trigger surface at all. The
+  # controls are ABSENT via a build-time module alias, not disabled: a disabled
+  # button advertises that a control exists, and a control that 404s invites
+  # someone to find out why.
+  #
+  # BOTH DIRECTIONS RUN, and that is the point. A grep for "no trigger surface"
+  # passes trivially against a misspelled marker, a wrong directory, or the
+  # residue of a failed build — the first read-only build here failed on a
+  # Turbopack alias error, emitted 99 files, and the check reported clean over
+  # the wreckage. So the internal build is verified to CONTAIN the surface
+  # first. That run is what makes the read-only run mean something.
+  # ==========================================================================
+  public-build:
+    name: two-tier deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+        working-directory: dashboard
+      - run: npm run typecheck
+        working-directory: dashboard
+
+      - name: Internal build MUST contain the trigger surface
+        working-directory: dashboard
+        env: { READ_ONLY: "false" }
+        run: npm run build && npm run verify:internal
+
+      - name: Public build must NOT contain it
+        working-directory: dashboard
+        env: { READ_ONLY: "true" }
+        run: rm -rf .next && npm run build && npm run verify:readonly
+
+  # ==========================================================================
   # 4. chaos-gate — the headline. Real kind cluster, real faults, REAL LOAD.
   # ==========================================================================
   chaos-gate:
@@ -426,7 +466,7 @@ jobs:
   build-sign-deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [unit, replay-eval, contract-gate, chaos-gate]
+    needs: [unit, replay-eval, contract-gate, public-build, chaos-gate]
     # Never from a pull request. Signing an artifact built from an unmerged
     # branch attests to something that is not on main, and a PR from a fork
     # would be signing someone else's code with this repository's identity.

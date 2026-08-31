@@ -20,6 +20,7 @@ live demo because an integration is unconfigured is a liability.
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 
 WEBHOOK_ENV = "CHAOSPROOF_SLACK_WEBHOOK"
@@ -100,6 +101,111 @@ def build_blocks(*, experiment: str, verdict: str, reason: str | None,
                 "url": grafana_url,
             }],
         })
+
+    return blocks
+
+
+# --------------------------------------------------------------------------- #
+# Score regression, and the button that costs ninety minutes (§20.3).
+# --------------------------------------------------------------------------- #
+
+def bisect_workflow_url(repo: str | None = None, *, experiment: str,
+                        good: str, bad: str) -> str | None:
+    """Deep link to the bisect workflow's dispatch form, pre-filled.
+
+    A URL BUTTON, deliberately, not an interactive one. A Block Kit button with
+    an `action_id` posts to a request URL, which would make ChaosProof an
+    inbound HTTP endpoint needing Slack signature verification, replay-window
+    checks and a secret to rotate — a whole security surface, added so that a
+    button could skip one page load. ChaosProof is otherwise a net CONSUMER of
+    Prometheus and Alertmanager and receives no inbound webhooks at all, and
+    that property is worth more than the click.
+
+    The link lands on GitHub's own dispatch form, which already authenticates
+    the human, records who pressed it, and shows the inputs before they run.
+    The authorisation §20.3 asks for is a person deciding — not a particular
+    widget.
+    """
+    repo = repo or os.environ.get("GITHUB_REPOSITORY")
+    if not repo:
+        return None
+    query = urllib.parse.urlencode({
+        "experiment": experiment, "good": good, "bad": bad})
+    return (f"https://github.com/{repo}/actions/workflows/bisect.yml"
+            f"?{query}")
+
+
+def regression_blocks(*, experiment: str, score_from: float, score_to: float,
+                      epoch: str | None, window_days: int,
+                      sigma: float | None, cost_label: str,
+                      separable: bool, separability_note: str,
+                      workflow_url: str | None = None) -> list[dict]:
+    """The message that reports a score regression and offers to diagnose it.
+
+    Three things are on it before the button, because the button costs ninety
+    minutes of exclusive cluster time:
+
+      1. The drop, WITH its epoch. A drop across an epoch boundary is not a
+         regression, it is a change to the scorer, and the trend chart already
+         says so with a vertical bar.
+      2. Sigma, so a reader can see for themselves whether the drop is larger
+         than the experiment's ordinary noise.
+      3. Whether the arithmetic can separate the two ends AT ALL. When it
+         cannot, the button is not rendered — offering a search that is
+         guaranteed to abandon is worse than offering nothing, because someone
+         will press it, wait, and conclude the tool is broken.
+    """
+    delta = abs(score_from - score_to)
+    direction = "fell" if score_to < score_from else "rose"
+
+    blocks: list[dict] = [
+        {"type": "header",
+         "text": {"type": "plain_text",
+                  "text": f":chart_with_downwards_trend: {experiment} — score "
+                          f"{direction} {delta:.3f}"}},
+        {"type": "section", "fields": [
+            {"type": "mrkdwn",
+             "text": f"*Score* `{score_from:.4f}` → `{score_to:.4f}`\n"
+                     f"*Epoch* `{(epoch or 'unknown')[:12]}`"},
+            {"type": "mrkdwn",
+             "text": f"*Window* {window_days} day(s)\n"
+                     f"*Sigma* " + (f"`{sigma:.4f}` on unchanged code"
+                                    if sigma is not None
+                                    else "_uncharacterised_")},
+        ]},
+        {"type": "context", "elements": [
+            {"type": "mrkdwn", "text": separability_note}]},
+    ]
+
+    if not separable:
+        # No button. Naming the reason is the actionable part: the fix is to
+        # reduce the experiment's variance, not to look harder at the commits.
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text":
+            ":no_bell: *Not bisectable.* This drop is inside the experiment's "
+            "own noise, so a binary search over it would abandon or, worse, "
+            "converge on a commit chosen by variance. Reduce sigma first."}})
+        return blocks
+
+    if workflow_url:
+        blocks.append({"type": "actions", "elements": [{
+            "type": "button",
+            "text": {"type": "plain_text", "text": cost_label},
+            "url": workflow_url,
+            # Ninety minutes of the one cluster is not an undo-able click.
+            "style": "primary",
+            "confirm": {
+                "title": {"type": "plain_text", "text": "Start a bisection?"},
+                "text": {"type": "mrkdwn", "text":
+                         f"*{cost_label}* of exclusive cluster time, in the "
+                         f"01:00–05:00 window. The daily chaos schedule does not "
+                         f"run while this does."},
+                "confirm": {"type": "plain_text", "text": "Open the form"},
+                "deny": {"type": "plain_text", "text": "Cancel"}},
+        }]})
+    else:
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text":
+            f"_{cost_label} — run it with_ "
+            f"`chaosctl bisect {experiment} --good <sha> --bad <sha> --apply`"}]})
 
     return blocks
 

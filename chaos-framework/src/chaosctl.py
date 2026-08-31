@@ -1,8 +1,8 @@
 """chaosctl — the CLI surface (mlops-quality reference §5).
 
 Phase 3 shipped `run` and `list`; Phase 8 adds the quality surface —
-`flakiness`, `epoch`, and `retro-score`. plan/replay/freeze/bisect land with
-their phases.
+`flakiness`, `epoch`, and `retro-score`; Phase 11 `replay`, `audit` and
+`postmortem`; Phase 12 `bisect`.
 
 Usage:
     python -m src.chaosctl run pod_kill_payment_svc
@@ -17,6 +17,7 @@ Usage:
     python -m src.chaosctl replay <sha>            # OFFLINE: no cluster, no network, no DB
     python -m src.chaosctl audit --verify-bundles
     python -m src.chaosctl postmortem <sha>
+    python -m src.chaosctl bisect <experiment> --good <sha> --bad <sha> --estimate
 Env:
     PROM_URL (default http://localhost:19090), TESTRUN (default steady-120rps)
     CHAOSPROOF_DB, CHAOSPROOF_SLACK_WEBHOOK, GITHUB_TOKEN
@@ -370,6 +371,166 @@ def cmd_postmortem(args) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# Phase 12 — regression bisection.
+# --------------------------------------------------------------------------- #
+
+def cmd_bisect(args) -> int:
+    """Binary-search a commit range for the change that moved the score.
+
+    The default is `--estimate`-like caution: nothing runs until the cost has
+    been printed and the repetition count derived from the experiment's measured
+    sigma. `--estimate` stops there; without `--apply` the search runs but the
+    result is not recorded.
+    """
+    import datetime as dt
+
+    from .bisect import commits as C
+    from .bisect import history as H
+    from .bisect import runner as B
+    from .bisect import store as S
+    from .bisect.cost import estimate, minutes_per_run_from_spec
+    from .bisect.sigma import reps_needed
+
+    spec_path = _resolve(args.experiment)
+    spec = yaml.safe_load(spec_path.read_text())
+    minutes = minutes_per_run_from_spec(spec)
+
+    # ---- the range, and whether it is even about resilience ---------------- #
+    try:
+        rng = C.resolve_range(args.good, args.bad, str(REPO_ROOT))
+    except C.GitUnavailable as e:
+        print(f"BISECT_REFUSED  {args.experiment}")
+        print(f"  reason:  {e}")
+        return 2
+
+    print(f"experiment : {args.experiment}")
+    print(f"range      : {rng.good[:12]}..{rng.bad[:12]}  "
+          f"{rng.width} commit(s) to discriminate")
+    print(f"cost model : {minutes:.1f} min/run, derived from the spec "
+          f"(steady-state + fault {spec['experiment']['fault_duration_s']}s + "
+          f"recovery {spec['experiment']['recovery_window_s']}s + cleanup)")
+
+    # ---- the four numbers, from the evidence store ------------------------- #
+    score_good, score_bad = args.score_good, args.score_bad
+    sigma_good = sigma_bad = args.sigma
+    epoch_sha = None
+
+    if None in (score_good, score_bad) or sigma_good is None:
+        try:
+            with _connect() as conn, conn.cursor() as cur:
+                if sigma_good is None:
+                    sigma_good, note = H.sigma_for(cur, args.experiment)
+                    sigma_bad = sigma_good
+                    print(f"sigma      : {note}")
+                if None in (score_good, score_bad):
+                    a_good = H.anchor_at(cur, args.experiment, rng.good)
+                    a_bad = H.anchor_at(cur, args.experiment, rng.bad)
+                    H.check_same_epoch(a_good, a_bad)
+                    score_good = score_good if score_good is not None else a_good.score
+                    score_bad = score_bad if score_bad is not None else a_bad.score
+                    epoch_sha = a_good.epoch_sha
+                    print(f"good       : {a_good.describe()}")
+                    print(f"bad        : {a_bad.describe()}")
+        except H.AnchorUnavailable as e:
+            print()
+            print(f"BISECT_REFUSED  {args.experiment}")
+            print(f"  reason:  {e}")
+            return 2
+        except Exception as e:                      # noqa: BLE001 - see below
+            # The evidence store being unreachable must not look like a
+            # separability refusal. Naming the failure is the difference between
+            # "your regression is inside the noise" and "postgres is down".
+            print()
+            print(f"BISECT_REFUSED  {args.experiment}")
+            print(f"  reason:  cannot read anchors from the evidence store: {e}. "
+                  f"Pass --score-good/--score-bad/--sigma to bisect against "
+                  f"numbers supplied by hand.")
+            return 2
+
+    delta = abs(score_good - score_bad)
+    derived = reps_needed(delta, sigma_good, sigma_bad)
+    reps = args.reps or derived
+    print(f"arithmetic : delta={delta:.4f}, sigma={sigma_good:.4f} -> "
+          f"{derived if derived else 'no affordable'} repetition(s) required"
+          + (f"; running {reps} by request" if args.reps and args.reps != derived
+             else ""))
+
+    if reps is None:
+        print()
+        print(f"BISECT_REFUSED  {args.experiment}")
+        print(f"  reason:  a regression of {delta:.4f} is not separable from this "
+              f"experiment's noise at any affordable repetition count. Reduce the "
+              f"variance before bisecting — that is a finding about the "
+              f"experiment, not about the code.")
+        return 2
+
+    cost = estimate(rng.width, reps, minutes)
+    print(f"cost       : {cost.button_label}  ({cost.reason})")
+    if rng.epoch_conflicts:
+        print(f"epoch      : RANGE TOUCHES {len(rng.epoch_conflicts)} "
+              f"epoch-defining path(s) — {', '.join(rng.epoch_conflicts[:3])}")
+    print()
+
+    if args.estimate:
+        # The whole point of §20.3: the cost is visible BEFORE it is incurred.
+        print("estimate only. Re-run without --estimate to start the search.")
+        return 0 if cost.affordable else 2
+
+    if not cost.affordable and not args.force:
+        print(f"BISECT_REFUSED  {args.experiment}")
+        print(f"  reason:  {cost.reason}")
+        return 2
+
+    driver = None
+    if args.from_history:
+        # Offline mode: read the score already recorded at each candidate rather
+        # than running anything. Useful only when the daily schedule happens to
+        # have covered the range, which it usually has not — so it reports the
+        # gaps as unscoreable rather than pretending to have visited them.
+        def evaluate(sha: str, n: int) -> list:
+            with _connect() as conn, conn.cursor() as cur:
+                try:
+                    a = H.anchor_at(cur, args.experiment, sha)
+                except H.AnchorUnavailable:
+                    return [None] * n
+                return [a.score] * min(n, a.runs) + [None] * max(0, n - a.runs)
+    else:
+        from .bisect.driver import WorktreeDriver
+        driver = WorktreeDriver(REPO_ROOT, args.experiment)
+        evaluate = driver
+
+    try:
+        result = B.bisect(
+            experiment=args.experiment, shas=rng.shas,
+            score_good=score_good, sigma_good=sigma_good,
+            score_bad=score_bad, sigma_bad=sigma_bad,
+            evaluate=evaluate, reps=reps, minutes_per_run=minutes,
+            epoch=epoch_sha, epoch_conflicts=rng.epoch_conflicts,
+            now=dt.datetime.now(), allow_outside_window=args.now)
+    finally:
+        # Like the cleanup saga: on every exit path, including a crash mid-search.
+        if driver is not None:
+            driver.cleanup()
+
+    print(result.render())
+
+    if args.apply:
+        with _connect() as conn, conn.cursor() as cur:
+            row_id = S.record(cur, result, requested_by=os.environ.get("USER")
+                              or os.environ.get("USERNAME"))
+            conn.commit()
+        print()
+        print(f"recorded as bisection #{row_id}")
+    else:
+        print()
+        print("not recorded. Re-run with --apply to persist this result — "
+              "including a refusal or an abandonment, which are the outcomes "
+              "worth keeping.")
+
+    return {"found": 0, "abandoned": 1, "refused": 2}[result.outcome]
+
+
+# --------------------------------------------------------------------------- #
 # Phase 10 — counterfactual pairs.
 # --------------------------------------------------------------------------- #
 
@@ -645,6 +806,36 @@ def main() -> int:
     p_pm = sub.add_parser("postmortem", help="draft a postmortem from a bundle")
     p_pm.add_argument("sha")
     p_pm.set_defaults(func=cmd_postmortem)
+
+    p_bi = sub.add_parser(
+        "bisect", help="binary-search a commit range for a score regression (§20)")
+    p_bi.add_argument("experiment")
+    p_bi.add_argument("--good", required=True, help="last known-good commit")
+    p_bi.add_argument("--bad", required=True, help="first known-bad commit")
+    p_bi.add_argument("--reps", type=int,
+                      help="override the repetition count. The derived value is "
+                           "printed either way; overriding it DOWNWARD is how a "
+                           "bisection converges on noise.")
+    p_bi.add_argument("--sigma", type=float,
+                      help="override the measured sigma (both anchors). For "
+                           "rehearsing the arithmetic without a flakiness window.")
+    p_bi.add_argument("--score-good", type=float)
+    p_bi.add_argument("--score-bad", type=float)
+    p_bi.add_argument("--estimate", action="store_true",
+                      help="print the cost and stop. This is what the Slack "
+                           "button's label is generated from.")
+    p_bi.add_argument("--now", action="store_true",
+                      help="run outside the nightly window. Recorded on the row.")
+    p_bi.add_argument("--force", action="store_true",
+                      help="proceed despite an unaffordable estimate")
+    p_bi.add_argument("--from-history", action="store_true",
+                      help="score candidates from runs already in the evidence "
+                           "store instead of running them. No cluster needed; "
+                           "candidates never visited come back unscoreable.")
+    p_bi.add_argument("--apply", action="store_true",
+                      help="persist the result. Without it this prints only.")
+    p_bi.set_defaults(func=cmd_bisect)
+
     args = parser.parse_args()
     return args.func(args)
 

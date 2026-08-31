@@ -23,3 +23,6 @@ dashboard/node_modules/
 .coverage
 .pytest_cache/
 htmlcov/
+
+# TypeScript incremental build cache - a local cache, never a source file
+dashboard/tsconfig.tsbuildinfo
