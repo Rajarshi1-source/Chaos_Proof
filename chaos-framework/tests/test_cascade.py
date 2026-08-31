@@ -240,3 +240,44 @@ def test_the_result_serialises_for_the_bundle(cascade):
     assert payload["propagated"] is False
     assert payload["stages"][1]["outcome"] == E.DID_NOT_PROPAGATE
     assert "absorbed" in payload["stages"][1]["note"]
+
+
+def test_the_scenario_documents_why_it_cannot_run_live(cascade):
+    """A scenario that looks runnable but is not wastes someone's afternoon.
+
+    `db_query_seconds` exists and is correctly wired; redis does not exist at
+    all, and inventory-service caches in-process. The file has to say so, or the
+    next person deploys a redis nothing depends on and gets a vacuous
+    `did_not_propagate` that reads as the project's best finding.
+    """
+    text = (SCENARIOS / "cache_outage_cascade.yaml").read_text(encoding="utf-8")
+    assert "RUNNABILITY" in text
+    assert "ABSENT" in text and "PRESENT" in text
+
+
+def test_no_service_actually_depends_on_redis():
+    """Pins the fact the RUNNABILITY note depends on, so the note cannot outlive
+    the condition it describes.
+
+    Checks for a real DEPENDENCY or client IMPORT, not the word. The first
+    version of this test matched any occurrence and failed on
+    InMemoryCacheClient's own comment — "in-process cache standing in for Redis
+    until the compose/K8s Redis lands" — which is the target app agreeing with
+    the note rather than contradicting it. A test that cannot tell a dependency
+    from a comment about the absence of one is worse than no test: it fails for
+    the opposite of its reason.
+    """
+    app = pathlib.Path(__file__).resolve().parents[2] / "target-app"
+
+    poms = [p for p in app.rglob("pom.xml")
+            if "redis" in p.read_text(encoding="utf-8").lower()
+            or "lettuce" in p.read_text(encoding="utf-8").lower()
+            or "jedis" in p.read_text(encoding="utf-8").lower()]
+    imports = [p for p in app.rglob("*.java")
+               for line in p.read_text(encoding="utf-8").splitlines()
+               if line.startswith("import") and (
+                   "redis" in line.lower() or "lettuce" in line.lower())]
+
+    assert not poms and not imports, (
+        "a service now genuinely depends on redis — cache_outage_cascade may be "
+        "runnable live; revisit its RUNNABILITY note")

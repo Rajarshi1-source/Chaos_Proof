@@ -9,6 +9,40 @@
 # completely, proved rather than assumed. A delay-only DAG can never produce
 # that result — it would inject the second fault regardless and then report on a
 # cascade it created itself.
+#
+# RUNNABILITY, stated here rather than discovered at injection time:
+#
+#   db_query_seconds   PRESENT. TimedInventoryRepository carries
+#                      @Timed(value="db_query", histogram=true), and because
+#                      DbReader is a SEPARATE bean that injects it, the Spring
+#                      proxy actually applies — the failure mode that
+#                      annotation is prone to is already avoided. D-I is done.
+#
+#   redis              ABSENT, and this is what makes the scenario
+#                      unrunnable today. inventory-service caches in a
+#                      ConcurrentHashMap (InMemoryCacheClient); there is no
+#                      redis client, no deployment, and an in-process cache
+#                      cannot be pod-deleted independently of its service.
+#
+# Deploying a redis to satisfy stage 1 was considered and REJECTED. It would
+# mean replacing a service's caching architecture so an experiment has
+# something to kill — and worse, a bolted-on redis would be OPTIONAL to
+# inventory-service, since the in-memory path already works. Killing it would
+# produce no DB pressure, the trigger would not fire, and the scenario would
+# report `did_not_propagate`: "the stale-cache fallback absorbed the outage
+# completely." That is this project's headline finding, arrived at vacuously.
+# A false version of the best result is worse than not having it.
+#
+# The cascade this topology COULD express — slow or kill postgres, watch
+# db_query_seconds rise, watch the stale fallback serve — targets a stateful
+# component that `deny-stateful-targets` refuses, and widening a policy rule to
+# make a run succeed is the one fix that is never available.
+#
+# So this scenario is exercised hermetically (22 tests in
+# chaos-framework/tests/test_cascade.py cover trigger-fires, trigger-never-
+# fires, upstream-skip, mid-cascade abort, reverse-order teardown, and teardown
+# continuing past a failure) and is NOT run live. What would change that: a
+# redis-backed cache that inventory-service genuinely depends on.
 scenario:
   name: cache_outage_cascade
   description: >
