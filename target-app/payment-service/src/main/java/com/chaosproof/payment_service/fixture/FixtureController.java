@@ -9,11 +9,14 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Chaos fixtures `cpu-burner` and `hungry-worker`. Gated behind
- * chaosproof.fixtures.enabled — absent from any public build, enabled only in
- * chaos namespaces. Fixture names match the `chaos_fixture` field on experiments.
+ * Chaos fixtures `cpu-burner`, `hungry-worker` and `flaky-payments`. Gated
+ * behind chaosproof.fixtures.enabled — absent from any public build, enabled
+ * only in chaos namespaces. Fixture names match the `chaos_fixture` field on
+ * experiments.
  */
 @RestController
 @ConditionalOnProperty("chaosproof.fixtures.enabled")
@@ -38,6 +41,40 @@ public class FixtureController {
             t.start();
         }
         return "burning " + threads + " threads for " + seconds + "s";
+    }
+
+    /**
+     * flaky-payments: fail a CONTROLLED PERCENTAGE of payment calls.
+     *
+     * Added for counterfactual analysis (§17), because packet loss turned out to
+     * be the wrong instrument for it. Measuring what a fallback is worth needs a
+     * fault severity where the "without" arm degrades but survives its own abort
+     * threshold — roughly 10% of REQUESTS failing. Packet loss does not give
+     * that: at 10% loss TCP retransmits recovered essentially everything and
+     * both arms showed ~0 failed requests, while the loss rate that does produce
+     * request failures is nonlinear and unstable near the abort boundary.
+     *
+     * An explicit error rate is the honest instrument for the question being
+     * asked. It is also visible: every activation logs at WARN and the rate is
+     * readable, so a service left flaky is discoverable rather than mysterious.
+     */
+    private static final AtomicInteger failPercent = new AtomicInteger(0);
+
+    public static boolean shouldFail() {
+        int pct = failPercent.get();
+        return pct > 0 && ThreadLocalRandom.current().nextInt(100) < pct;
+    }
+
+    @PostMapping("/fixtures/flaky")
+    public String flaky(@RequestParam(defaultValue = "0") int percent) {
+        int clamped = Math.max(0, Math.min(100, percent));
+        failPercent.set(clamped);
+        if (clamped == 0) {
+            log.warn("chaos fixture flaky-payments: DISABLED");
+        } else {
+            log.warn("chaos fixture flaky-payments: failing {}% of payment calls", clamped);
+        }
+        return "flaky-payments at " + clamped + "%";
     }
 
     /** hungry-worker: allocates until the container OOMs. Deliberately unbounded. */

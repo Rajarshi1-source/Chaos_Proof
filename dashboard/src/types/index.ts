@@ -138,3 +138,70 @@ export type ViewState<T> =
   | { state: 'empty'; hint: string }
   | { state: 'error'; message: string; stale?: T; staleAgeS?: number }
   | { state: 'ready'; data: T; staleAgeS?: number };
+
+/**
+ * Counterfactual ROI (§17).
+ *
+ * `deltaMedian` is `number | null` rather than `number`, and that nullability is
+ * load-bearing rather than defensive: an `inconclusive` verdict has NO delta,
+ * and typing it as always-present would let a renderer read `0` or `NaN` and
+ * display it. The type system carries the rule "never show a delta when the
+ * IQRs overlap" into every consumer.
+ */
+export interface CounterfactualAssumption {
+  key: string;
+  value: number;
+  label: string;
+  basis: string;
+  unit: string;
+  editable: boolean;
+  /** Rendered verbatim beside the input. An unlabelled estimate reads as a measurement. */
+  tag: string;
+}
+
+export interface CounterfactualCost {
+  pattern: string;
+  requestsSavedPerIncident: number;
+  valuePerIncident: number;
+  valuePerYear: number;
+  currency: string;
+  caveat: string;
+  assumptions: CounterfactualAssumption[];
+}
+
+export type CounterfactualVerdict =
+  | 'pattern_effective'
+  | 'pattern_harmful'
+  | 'no_measurable_effect'
+  | 'inconclusive'
+  | 'insufficient_data';
+
+export interface CounterfactualPattern {
+  pattern: string;
+  metric: string;
+  n: number;
+  withMedian: number | null;
+  withIqr: number[] | null;
+  withoutMedian: number | null;
+  withoutIqr: number[] | null;
+  overlap: boolean;
+  verdict: CounterfactualVerdict;
+  reason: string;
+  /** null whenever the verdict does not support one. Never computed client-side. */
+  deltaMedian: number | null;
+  lowerIsBetter: boolean;
+  pairId: string;
+  experiment: string;
+  discardedRuns: { arm: string; repetition: number; verdict: string; executionId: number }[];
+  withValues: number[];
+  withoutValues: number[];
+  cost: CounterfactualCost | null;
+}
+
+export interface CounterfactualResponse {
+  metric: string;
+  lowerIsBetter: boolean;
+  minRepetitions: number;
+  patterns: CounterfactualPattern[];
+  note: string;
+}

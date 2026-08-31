@@ -1,0 +1,116 @@
+# Counterfactual pair #1 — the fallback's value at a MEASURABLE fault severity.
+#
+# WHY THIS EXPERIMENT EXISTS, and it is the most useful thing GATE 10 taught:
+#
+# The obvious counterfactual is `partition_no_fallback` — 100% packet loss with
+# the queued fallback disabled. It was run first, 5 repetitions per arm, and it
+# could not be measured. Without the fallback a TOTAL partition drives client
+# availability to ~0, which crosses the "without" arm's tightened abort
+# threshold (0.85) within about 30 seconds. All three completed `without` arms
+# ABORTED, and the analysis correctly reported INSUFFICIENT_DATA rather than
+# computing a delta from three `with` runs and zero `without` runs.
+#
+# The lesson generalises: A COUNTERFACTUAL IS ONLY MEASURABLE AT FAULT
+# SEVERITIES WHERE THE "WITHOUT" ARM SURVIVES ITS OWN ABORT THRESHOLD. Beyond
+# that severity you learn only that the pattern matters — never how much, because
+# the safety plane stops the measurement before it can be taken. That is not a
+# flaw in the safety plane; the alternative is letting a deliberately degraded
+# configuration run unbounded, which is the one outcome this project refuses.
+#
+# So the fault is sized to the measurement. At 10% packet loss:
+#   with the fallback     failed payment calls become QUEUED successes, so
+#                         client availability stays ~100%
+#   without the fallback  those same calls surface as 5xx, so availability
+#                         settles near 90% - degraded, clearly worse, and
+#                         comfortably above the 0.85 abort floor
+#
+# Both arms therefore COMPLETE, which is the precondition for a delta existing
+# at all.
+experiment:
+  name: counterfactual_partial_loss_fallback
+  litmus_fault: pod-network-loss
+
+  # chaos-staging only, by policy (deny-counterfactual-outside-staging).
+  target: { namespace: chaos-staging, app: payment-service }
+  mode: counterfactual
+
+  fault_duration_s: 60
+  recovery_window_s: 60
+  # The FAULT is the in-app error rate, not the network. Packet loss was tried
+  # first and proved to be the wrong instrument: at 10% loss TCP retransmits
+  # recovered essentially everything (both arms ~0 failed requests), and the
+  # loss rate that does produce request failures turned out to be BISTABLE near
+  # the abort boundary — the same 10% aborted three of five `without` arms
+  # while two sailed through, which is variance masquerading as a measurement.
+  #
+  # 10% of REQUESTS is also deliberately below the circuit breaker's 50%
+  # failureRateThreshold, so the breaker stays closed and the arms differ only
+  # in whether the FALLBACK is present. Above that threshold the breaker opens,
+  # and without a fallback an open breaker converts intermittent failure into
+  # total failure — a real effect, but a different experiment.
+  # 4%, not 10%. At 10% the `without` arm still aborted every time, at an
+  # observed availability of 0.8137 rather than the ~0.90 a 10% error rate
+  # implies. The gap is the mechanism, and it is the most interesting thing
+  # this pair found:
+  #
+  #   The circuit breaker's sliding window is 10 calls with a 50% failure
+  #   threshold. At a 10% base error rate a window of 10 calls reaches 5
+  #   failures by chance often enough to matter across thousands of windows.
+  #   WITH the fallback an open breaker is harmless - the fallback serves.
+  #   WITHOUT it, an open breaker converts a 10% failure rate into a 100%
+  #   failure rate for the full 30s waitDurationInOpenState.
+  #
+  # So the breaker AMPLIFIES failure when it has nothing to fall back to,
+  # exactly as the retry amplified it in Phase 9. 4% keeps the breaker closed,
+  # which is what isolates the fallback's own contribution from the breaker's.
+  chaos_fixture: flaky-payments
+  chaos_fixture_percent: 4
+  params:
+    # Litmus injects a negligible network fault so the ChaosEngine, its probes
+    # and the abort path are all still exercised; the measurable fault is the
+    # fixture above.
+    NETWORK_PACKET_LOSS_PERCENTAGE: "1"
+
+  # The pattern lives on the CONSUMER (order-api), not the fault target
+  # (payment-service). The cleanup saga restores the flag, with the
+  # chaos-cleanup CronJob as the out-of-band path.
+  disable_patterns: ["paymentService.fallback"]
+  flag_target: order-api
+
+  load_profile: profiles/steady_120rps.js
+  min_rps_floor: 90
+
+  pattern_metric: null
+  pattern_name: null
+
+  hypothesis:
+    version: 1
+    description: >
+      With 10% packet loss to payment-service, order-api's queued fallback
+      converts the failed calls into degraded-but-successful checkouts, so client
+      availability holds above 95%. With the fallback disabled the same calls
+      surface as 5xx and availability settles near 90% - worse, but bounded.
+      The difference between the two arms is what the fallback is worth against
+      this failure mode.
+
+    invariants:
+      - name: client_availability_holds
+        source: k6
+        metric: client_availability
+        comparator: ">="
+        threshold: 0.95
+        tolerance_s: 15
+
+    # Never ship an experiment without abort conditions. The "without" arm
+    # tightens these at runtime: harder failure is expected, unbounded is not.
+    abort_conditions:
+      - name: availability_collapse
+        source: k6
+        metric: client_availability
+        comparator: "<"
+        threshold: 0.80
+      - name: unrelated_namespace_impact
+        source: prometheus
+        metric: other_namespace_5xx_rate
+        comparator: ">"
+        threshold: 0.5

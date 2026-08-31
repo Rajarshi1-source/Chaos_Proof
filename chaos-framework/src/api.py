@@ -50,6 +50,20 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="ChaosProof", version="0.6.0", lifespan=lifespan)
 
 
+# Counterfactual executions are DELIBERATELY DEGRADED configurations: the
+# "without" arm has a resilience pattern switched off on purpose. Averaging them
+# into the resilience score would make the system look worse the more carefully
+# it is measured, and would break the trend line for a reason that has nothing
+# to do with the system's reliability.
+#
+# Defined once, as a predicate, because "exclude counterfactuals" is the kind of
+# rule that gets applied to the headline query and forgotten on the aggregate
+# beside it — which is worse than not applying it at all, because the two
+# numbers then disagree and neither is obviously wrong.
+NOT_COUNTERFACTUAL = ("e.id NOT IN (SELECT execution_id FROM counterfactual_runs)")
+NOT_COUNTERFACTUAL_BARE = ("id NOT IN (SELECT execution_id FROM counterfactual_runs)")
+
+
 @app.get("/api/health")
 def health():
     try:
@@ -92,6 +106,7 @@ def current_score():
                  FROM experiment_executions e
                  LEFT JOIN scoring_epochs s ON s.id = e.scoring_epoch_id
                 WHERE e.verdict = ANY(%s) AND e.score IS NOT NULL
+                  AND """ + NOT_COUNTERFACTUAL + """
                 ORDER BY e.id DESC LIMIT 1""",
             (list(SCOREABLE),))
         row = cur.fetchone()
@@ -104,7 +119,8 @@ def current_score():
             """SELECT avg(score)::float AS avg, count(*) AS n
                  FROM experiment_executions
                 WHERE verdict = ANY(%s) AND score IS NOT NULL
-                  AND scoring_epoch_id = %s""",
+                  AND scoring_epoch_id = %s
+                  AND """ + NOT_COUNTERFACTUAL_BARE + """""",
             (list(SCOREABLE), row["epoch_id"]))
         agg = cur.fetchone()
 
@@ -132,6 +148,7 @@ def trends(days: int = 30):
                  FROM experiment_executions e
                  LEFT JOIN scoring_epochs s ON s.id = e.scoring_epoch_id
                 WHERE e.started_at >= now() - make_interval(days => %s)
+                  AND """ + NOT_COUNTERFACTUAL + """
                 ORDER BY e.id""",
             (days,))
         rows = cur.fetchall()
@@ -363,3 +380,55 @@ def preflight_decisions(limit: int = 30):
 # NOTE: there is deliberately NO trigger endpoint here. No route that can inject
 # a fault is reachable from the dashboard; the only path that can is inside the
 # cluster. See the read-only build flag in the front end.
+
+
+@app.get("/api/counterfactual")
+def counterfactual(metric: str = "failed_requests"):
+    """The ROI panel's data (§17).
+
+    Every pattern with recorded pairs, analysed independently. The API returns
+    `delta` as null whenever the verdict does not support one — the suppression
+    happens HERE, at the source, so a renderer cannot find a delta lying next to
+    an `inconclusive` verdict and decide to show it. That is the dashboard rule
+    "never show a counterfactual delta when the IQRs overlap", enforced where it
+    cannot be forgotten.
+    """
+    from .counterfactual import cost as C
+    from .counterfactual import runner as CF
+
+    lower_is_better = metric in ("failed_requests", "p99_ms", "recovery_s")
+    out = []
+    with _conn() as c, c.cursor() as cur:
+        cur.execute("SELECT DISTINCT pattern_name FROM counterfactual_runs "
+                    "ORDER BY pattern_name")
+        patterns = [r["pattern_name"] for r in cur.fetchall()]
+        for pattern in patterns:
+            pair = CF.load_pair(cur, pattern)
+            if pair is None:
+                continue
+            result = pair.analyse(metric, lower_is_better=lower_is_better)
+            estimate = C.estimate(result)
+            out.append({
+                **result.to_dict(),
+                "pairId": pair.pair_id,
+                "experiment": pair.experiment,
+                "discardedRuns": [
+                    {"arm": r.arm, "repetition": r.repetition,
+                     "verdict": r.verdict, "executionId": r.execution_id}
+                    for r in pair.discarded()],
+                "withValues": pair.values("with_pattern", metric),
+                "withoutValues": pair.values("without_pattern", metric),
+                "cost": estimate.to_dict() if estimate else None,
+            })
+
+    return {
+        "metric": metric,
+        "lowerIsBetter": lower_is_better,
+        "minRepetitions": __import__(
+            "src.counterfactual.analysis", fromlist=["MIN_REPETITIONS"]
+        ).MIN_REPETITIONS,
+        "patterns": out,
+        "note": ("Counterfactual executions are excluded from the resilience "
+                 "score and the trend: they are deliberately degraded "
+                 "configurations and would poison both."),
+    }

@@ -25,7 +25,14 @@ spec:
       - name: TARGET_URL
         value: http://order-api.chaos-staging:8080
       - name: LOAD_DURATION
-        value: "45m"          # covers a full six-experiment suite plus warmup
+        # 90m, not 45m. A counterfactual PAIR is 10 interleaved arms — five
+        # per side plus settle time — which outlasts a 45m generator. When the
+        # generator expired mid-pair the remaining arms were correctly REFUSED
+        # (pre-flight: "no client availability samples in the last 120s"), so
+        # nothing was injected blind; but half a pair is not a pair, and the
+        # whole run had to be repeated. Staging is where pairs run, so its
+        # generator is sized for a pair.
+        value: "90m"
       - name: K6_PROMETHEUS_RW_SERVER_URL
         value: http://kps-kube-prometheus-stack-prometheus.monitoring:9090/api/v1/write
       # Defect D-B (found by the Phase 7 gate): with trend stats exported as

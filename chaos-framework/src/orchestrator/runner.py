@@ -33,6 +33,7 @@ from ..measurement.sampler import DualSourceSampler
 from ..measurement.validity import LoadFacts
 from ..safety import blast_radius as blast_mod
 from ..safety import cleanup as cleanup_mod
+from ..safety import fixtures as fixtures_mod
 from ..safety import flags as flags_mod
 from ..safety import preflight as preflight_mod
 from ..safety import watchdog as watchdog_mod
@@ -138,6 +139,18 @@ def run(spec_path: pathlib.Path, prom_url: str, testrun: str, alertmanager_url: 
         # fault can do anything" rather than "register somewhere near the top".
         saga.register("stop_chaosengine", lambda: (litmus.stop_engine(ns, engine), "stopped")[1])
         saga.register("delete_chaosengine", lambda: (litmus.delete_engine(ns, engine), "deleted")[1])
+
+        # Chaos fixture, if the experiment declares a stateful one. Registered
+        # for disarm on the VERY NEXT LINE, for the same reason the ChaosEngine
+        # is: nothing that can raise may sit between arming a fault and being
+        # able to undo it. A fixture left armed is a service quietly failing a
+        # fraction of its requests with no experiment running to explain it.
+        fixture = spec.get("chaos_fixture")
+        fixture_percent = int(spec.get("chaos_fixture_percent") or 0)
+        if fixture and fixture_percent > 0:
+            summary, disarm = fixtures_mod.arm(ns, app, fixture, fixture_percent)
+            saga.register("disarm_chaos_fixture", disarm)
+            print(f"fixture    : {summary}") if on_tick is None else None
 
         # Counterfactual arm: the flag plane lives on the service that OWNS the
         # pattern (the consumer), which is NOT the fault target. Disabling

@@ -108,3 +108,67 @@ a { color: var(--accent); }
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* ---------------------------------------------------------------------------
+   Counterfactual ROI panel (§17).
+
+   The colour decision mirrors --verdict-invalid: `inconclusive` is SLATE and
+   HATCHED, never red and never green. An inconclusive counterfactual is not a
+   failed pattern and not a working one — it is a measurement that could not
+   separate the two arms, and colouring it as either would state a conclusion
+   the evidence does not support. The hatch makes it read as a third thing at a
+   glance, the same way an INVALID run does.
+   --------------------------------------------------------------------------- */
+.cf-panel { display: flex; flex-direction: column; gap: 10px; }
+.cf-panel-head { display: flex; justify-content: space-between; align-items: baseline; }
+.cf-note { font-size: 12px; margin: 0; }
+.cf-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+
+.cf-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+
+.cf-verdict {
+  font-size: 10px; letter-spacing: 0.06em; font-weight: 600;
+  padding: 3px 8px; border-radius: 4px; white-space: nowrap;
+}
+.cf-verdict--effective { color: var(--verdict-held); background: var(--verdict-held-bg); }
+.cf-verdict--harmful { color: var(--verdict-falsified); background: var(--verdict-falsified-bg); }
+.cf-verdict--neutral { color: var(--verdict-skipped); background: var(--verdict-skipped-bg); }
+.cf-verdict--inconclusive {
+  color: var(--verdict-invalid);
+  background: var(--verdict-invalid-bg);
+  background-image: repeating-linear-gradient(
+    45deg, transparent, transparent 3px,
+    var(--verdict-invalid-hatch) 3px, var(--verdict-invalid-hatch) 6px);
+}
+
+.cf-plot { display: flex; flex-direction: column; gap: 6px; }
+.cf-row { display: grid; grid-template-columns: 56px 1fr auto; align-items: center; gap: 8px; }
+.cf-arm { font-size: 11px; color: var(--fg-muted); }
+.cf-track { position: relative; height: 18px; background: var(--bg-subtle); border-radius: 3px; }
+.cf-box { position: absolute; top: 3px; height: 12px; border-radius: 2px; min-width: 2px; }
+.cf-box--with { background: color-mix(in srgb, var(--verdict-held) 55%, transparent); }
+.cf-box--without { background: color-mix(in srgb, var(--verdict-falsified) 55%, transparent); }
+.cf-median { position: absolute; top: 1px; width: 2px; height: 16px; }
+.cf-median--with { background: var(--verdict-held); }
+.cf-median--without { background: var(--verdict-falsified); }
+.cf-num { font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.cf-delta { margin-top: 12px; font-size: 13px; }
+.cf-delta-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* The suppressed state is deliberately as prominent as the reported one. A
+   dashboard that whispers when it cannot conclude teaches people to skim past
+   exactly the cases that need reading. */
+.cf-delta--suppressed .cf-delta-value { color: var(--verdict-invalid); }
+
+.cf-reason { font-size: 12px; margin: 6px 0 0; line-height: 1.45; }
+
+.cf-cost { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.cf-cost-figure { font-size: 14px; font-variant-numeric: tabular-nums; }
+.cf-caveat { font-size: 11px; margin: 4px 0 8px; }
+.cf-assumptions { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 3px; }
+.cf-assumptions li { font-size: 11px; line-height: 1.4; }
+.cf-tag {
+  font-size: 10px; color: var(--verdict-invalid);
+  background: var(--verdict-invalid-bg); padding: 1px 4px; border-radius: 3px;
+}
+.cf-discarded { font-size: 11px; margin: 8px 0 0; }

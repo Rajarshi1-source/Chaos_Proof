@@ -1,8 +1,9 @@
 import { ScoreTrendChart } from '@/components/dashboard/ScoreTrendChart';
 import { ValidityStrip } from '@/components/dashboard/ValidityStrip';
+import { CounterfactualPanel } from '@/components/dashboard/CounterfactualPanel';
 import { VerdictBadge, toVerdict } from '@/components/common/VerdictBadge';
 import { fetchJson } from '@/lib/api';
-import type { TrendResponse, ValidityPoint } from '@/types';
+import type { CounterfactualResponse, TrendResponse, ValidityPoint } from '@/types';
 
 interface ScoreResponse {
   score: number | null;
@@ -44,11 +45,12 @@ function ErrorPanel({ what, message }: { what: string; message: string }) {
 }
 
 export default async function Page() {
-  const [score, trend, validity, executions] = await Promise.all([
+  const [score, trend, validity, executions, counterfactual] = await Promise.all([
     fetchJson<ScoreResponse>('/api/score'),
     fetchJson<TrendResponse>('/api/trends'),
     fetchJson<ValidityPoint[]>('/api/validity'),
     fetchJson<ExecutionRow[]>('/api/executions?limit=12'),
+    fetchJson<CounterfactualResponse>('/api/counterfactual'),
   ]);
 
   return (
@@ -99,6 +101,16 @@ export default async function Page() {
         <ErrorPanel what="Validity strip" message={validity.error} />
       ) : (
         <ValidityStrip points={validity.data!} />
+      )}
+
+      {/* The ROI panel. Counterfactual executions are excluded from the score
+          and the trend above — they are deliberately degraded configurations,
+          and averaging them in would make the system look worse the more
+          carefully it is measured. */}
+      {counterfactual.error ? (
+        <ErrorPanel what="Counterfactual ROI" message={counterfactual.error} />
+      ) : (
+        <CounterfactualPanel data={counterfactual.data} />
       )}
 
       <div className="card" style={{ padding: 16 }}>

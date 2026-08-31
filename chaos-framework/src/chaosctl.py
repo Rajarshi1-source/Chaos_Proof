@@ -12,6 +12,8 @@ Usage:
     python -m src.chaosctl retro-score --last N --reason "..." [--apply]
     python -m src.chaosctl contracts generate [--service X] [--write]
     python -m src.chaosctl contracts validate <service> [--run]
+    python -m src.chaosctl counterfactual run <experiment> [-n 5]
+    python -m src.chaosctl counterfactual report [--metric failed_requests]
 Env:
     PROM_URL (default http://localhost:19090), TESTRUN (default steady-120rps)
     CHAOSPROOF_DB, CHAOSPROOF_SLACK_WEBHOOK, GITHUB_TOKEN
@@ -21,6 +23,7 @@ import argparse
 import os
 import pathlib
 import sys
+import tempfile
 
 import yaml
 
@@ -298,6 +301,123 @@ def cmd_retro_score(args) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# Phase 10 — counterfactual pairs.
+# --------------------------------------------------------------------------- #
+
+def cmd_counterfactual(args) -> int:
+    from .counterfactual import analysis as A
+    from .counterfactual import cost as C
+    from .counterfactual import runner as CF
+
+    if args.counterfactual_command == "report":
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT pattern_name FROM counterfactual_runs "
+                        "ORDER BY pattern_name")
+            patterns = [r[0] for r in cur.fetchall()]
+            if not patterns:
+                print("no counterfactual pairs recorded yet")
+                return 0
+            lower = args.metric in ("failed_requests", "p99_ms", "recovery_s")
+            for pattern in patterns:
+                pair = CF.load_pair(cur, pattern)
+                if pair is None:
+                    continue
+                result = pair.analyse(args.metric, lower_is_better=lower)
+                print(C.render(result, C.estimate(result)))
+                if pair.discarded():
+                    print(f"  discarded {len(pair.discarded())} unusable run(s): "
+                          + ", ".join(f"{r.arm}#{r.repetition}={r.verdict}"
+                                      for r in pair.discarded()))
+                print()
+        return 0
+
+    # run
+    spec_path = _resolve(args.experiment)
+    spec = yaml.safe_load(spec_path.read_text())["experiment"]
+
+    # Refuses BEFORE anything is disabled.
+    plan = CF.plan_pair(spec, repetitions=args.repetitions)
+
+    prom_url = os.environ.get("PROM_URL", "http://localhost:19090")
+    testrun = os.environ.get("TESTRUN", "staging-120rps")
+    am_url = os.environ.get("ALERTMANAGER_URL", "http://localhost:19093")
+
+    pair_id = CF.new_pair_id()
+    pattern = spec["disable_patterns"][0]
+    ns = spec["target"]["namespace"]
+    flag_app = spec.get("flag_target", "order-api")
+
+    print(f"counterfactual pair {pair_id}")
+    print(f"  experiment {spec['name']}   pattern {pattern}")
+    print(f"  {args.repetitions} repetitions per arm, INTERLEAVED "
+          f"(with, without, with, ...) so cluster drift affects both arms equally")
+    print(f"  namespace {ns} (staging only, by policy)")
+    print()
+
+    runs: list[CF.ArmRun] = []
+    for index, (arm, repetition) in enumerate(plan, start=1):
+        arm_spec = CF.spec_for_arm(spec, arm)
+        label = f"[{index}/{len(plan)}] {arm} #{repetition}"
+        print(f"{label} ...", flush=True)
+
+        # OUTSIDE experiments/, deliberately. Writing per-arm specs beside the
+        # real ones let a leftover temp file be RESOLVED AS AN EXPERIMENT: a
+        # killed run left `.name.with_pattern.tmp.yaml` behind, and because the
+        # with-arm spec has `disable_patterns` stripped, the next pair resolved
+        # that file and refused itself with "no disable_patterns". The safety
+        # check was right; the input was the wrong file. A scratch directory
+        # cannot collide with the experiment registry at all.
+        tmp_dir = pathlib.Path(tempfile.gettempdir()) / "chaosproof-arms"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp = tmp_dir / f"{spec['name']}.{arm}.yaml"
+        tmp.write_text(yaml.safe_dump({"experiment": arm_spec}, sort_keys=False),
+                       encoding="utf-8")
+        try:
+            r = runner.run(tmp, prom_url, testrun, am_url, require_override=True)
+            failed, p99 = CF.metrics_from_samples(r["samples"])
+            run = CF.ArmRun(arm, repetition, r["execution_id"],
+                            r["verdict"].verdict, failed, p99)
+            print(f"       execution #{run.execution_id}  {run.verdict}  "
+                  f"failed~{0 if failed is None else failed:.0f}  "
+                  f"p99 {0 if p99 is None else p99:.0f}ms"
+                  + ("" if run.usable else "   (not usable - excluded)"))
+        except PreflightSkip as e:
+            execution_id = runner.record_refusal(spec, e.verdict, e.reason, e.evidence)
+            run = CF.ArmRun(arm, repetition, execution_id, e.verdict, error=e.reason)
+            print(f"       REFUSED {e.verdict}: {e.reason}")
+        except Exception as exc:                                   # noqa: BLE001
+            run = CF.ArmRun(arm, repetition, None, "error", error=str(exc))
+            print(f"       ERROR {type(exc).__name__}: {exc}")
+        finally:
+            tmp.unlink(missing_ok=True)
+
+        runs.append(run)
+        with _connect() as conn, conn.cursor() as cur:
+            CF.record(cur, pair_id, pattern, run)
+            conn.commit()
+
+        # Between arms: verify the flags actually came back before starting the
+        # next one. A pair that half-restores leaves the next arm measuring a
+        # mixture of two configurations.
+        try:
+            CF.verify_flags_restored(ns, flag_app, {})
+        except CF.CounterfactualSafetyError as exc:
+            print(f"       HALTING PAIR: {exc}")
+            break
+        except Exception as exc:                                   # noqa: BLE001
+            print(f"       note: could not verify flags ({type(exc).__name__})")
+
+        if index < len(plan):
+            CF.wait_between_arms(args.settle_s)
+
+    pair = CF.PairResult(pair_id, pattern, spec["name"], runs)
+    result = pair.analyse("failed_requests")
+    print()
+    print(C.render(result, C.estimate(result)))
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # Phase 9 — resilience contracts.
 # --------------------------------------------------------------------------- #
 
@@ -426,6 +546,23 @@ def main() -> int:
                        help="measure does_not_inflict clauses against live "
                             "Prometheus (needs PROM_URL)")
     p_val.set_defaults(func=cmd_contracts)
+
+    p_cf = sub.add_parser("counterfactual",
+                          help="pattern on-vs-off pairs (§17, staging only)")
+    cf_sub = p_cf.add_subparsers(dest="counterfactual_command", required=True)
+
+    p_cf_run = cf_sub.add_parser("run", help="run one interleaved pair")
+    p_cf_run.add_argument("experiment")
+    p_cf_run.add_argument("-n", "--repetitions", type=int, default=5,
+                          help="repetitions PER ARM (minimum 5; below that the "
+                               "analysis refuses to report a delta)")
+    p_cf_run.add_argument("--settle-s", type=float, default=30.0,
+                          help="settle time between arms")
+    p_cf_run.set_defaults(func=cmd_counterfactual)
+
+    p_cf_rep = cf_sub.add_parser("report", help="analyse recorded pairs")
+    p_cf_rep.add_argument("--metric", default="failed_requests")
+    p_cf_rep.set_defaults(func=cmd_counterfactual)
     args = parser.parse_args()
     return args.func(args)
 

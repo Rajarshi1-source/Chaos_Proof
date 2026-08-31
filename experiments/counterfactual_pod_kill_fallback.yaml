@@ -1,0 +1,87 @@
+# Counterfactual pair #2 — the SAME pattern under a fault where it should not
+# matter (§17).
+#
+# Pair #1 (`partition_no_fallback`) disables order-api's queued fallback under a
+# TOTAL partition of payment-service: every call fails, so the fallback is the
+# only thing standing between the user and an error. A large effect is expected.
+#
+# This pair disables the SAME pattern under a POD KILL. One of two replicas
+# dies; the Service routes to the survivor; almost no call ever reaches a dead
+# endpoint. The fallback has nothing to absorb, so both arms should look alike.
+#
+# THAT IS THE POINT. The expected outcome here is `inconclusive`, and it is a
+# real finding rather than a failed experiment: it says the fallback's value is
+# FAULT-SPECIFIC. Quoting one ROI figure for "the circuit breaker" without
+# saying which failure mode it was measured against would be exactly the kind of
+# seductive single number this feature exists to avoid.
+#
+# A pair that cannot come out inconclusive is a pair whose conclusion was
+# decided before it ran.
+experiment:
+  name: counterfactual_pod_kill_fallback
+  litmus_fault: pod-delete
+
+  # chaos-staging, because deny-counterfactual-outside-staging says so. The
+  # "without" arm deliberately removes protection, and staging is the only
+  # place that is allowed to happen.
+  target: { namespace: chaos-staging, app: payment-service }
+  mode: counterfactual
+
+  fault_duration_s: 60
+  recovery_window_s: 120
+  chaos_fixture: crashy-api
+  params:
+    PODS_AFFECTED_PERC: "50"     # one of two replicas; a SINGLE kill event
+
+  # The pattern lives on the CONSUMER (order-api), not the fault target. We kill
+  # a payment-service pod and disable the caller's fallback: two different
+  # services, one experiment. The cleanup saga restores the flag, with the
+  # chaos-cleanup CronJob as the out-of-band path.
+  disable_patterns: ["paymentService.fallback"]
+  flag_target: order-api
+
+  load_profile: profiles/steady_120rps.js
+  min_rps_floor: 90
+
+  pattern_metric: null           # the surviving replica serves; the breaker
+  pattern_name: null             # should NOT need to open, so nothing is asserted
+
+  hypothesis:
+    version: 1
+    description: >
+      Killing one of two payment-service replicas under 120 rps, the surviving
+      replica absorbs the traffic via Service endpoints and order-api's queued
+      fallback is never exercised. Client availability therefore holds at >=99%
+      in BOTH arms, and the counterfactual comparison is expected to be
+      inconclusive — which is the finding: this pattern's value is specific to
+      the partition failure mode, not to pod loss.
+
+    invariants:
+      - name: client_availability_holds
+        source: k6
+        metric: client_availability
+        comparator: ">="
+        threshold: 0.990
+        tolerance_s: 10          # endpoint convergence
+
+      - name: replicas_restored
+        source: prometheus
+        metric: payment_replicas_available
+        comparator: ">="
+        threshold: 2
+        recover_within_s: 120    # from FIRST BREACH; JVM cold start dominates
+
+    # Never ship an experiment without abort conditions — and the "without" arm
+    # tightens these further at runtime, because harder failure is expected but
+    # unbounded failure is not.
+    abort_conditions:
+      - name: availability_collapse
+        source: k6
+        metric: client_availability
+        comparator: "<"
+        threshold: 0.80
+      - name: unrelated_namespace_impact
+        source: prometheus
+        metric: other_namespace_5xx_rate
+        comparator: ">"
+        threshold: 0.5

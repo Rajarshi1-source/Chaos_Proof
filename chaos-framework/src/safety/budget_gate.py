@@ -73,11 +73,30 @@ def breaker(cur, namespace: str) -> BreakerState:
     if row:
         return BreakerState("open", f"manual freeze: {row[0]}")
 
+    # A COUNTERFACTUAL "without" ARM IS EXPECTED TO ABORT, so its abort is not
+    # evidence that the system is behaving worse than predicted — it is the
+    # prediction. Counting those aborts here breaks the breaker's own stated
+    # meaning and makes counterfactual analysis structurally impossible:
+    # surfaced by GATE 10, where three consecutive `without_pattern` aborts
+    # opened the breaker and DENIED the remaining runs of the same pair,
+    # including the healthy `with_pattern` baseline arms. The pair could never
+    # reach n=5 on either side, so no counterfactual could ever be measured.
+    #
+    # `with_pattern` aborts are NOT excluded. Those are unexpected: the pattern
+    # was in place and the system still ran away, which is exactly the signal
+    # this breaker exists to catch.
+    #
+    # The runs are still recorded, still aborted, and still visible. They are
+    # simply not counted as evidence of unpredicted fragility.
     cur.execute(
         """SELECT count(*) AS n,
                   EXTRACT(EPOCH FROM (now() - max(started_at)))/3600.0 AS hours_since
-             FROM experiment_executions
-            WHERE verdict = 'aborted' AND started_at >= now() - interval '24 hours'""")
+             FROM experiment_executions e
+            WHERE e.verdict = 'aborted'
+              AND e.started_at >= now() - interval '24 hours'
+              AND e.id NOT IN (
+                    SELECT execution_id FROM counterfactual_runs
+                     WHERE arm = 'without_pattern')""")
     row = cur.fetchone()
     aborts, hours_since = int(row[0] or 0), float(row[1] or 0.0)
     if aborts >= BREAKER_ABORTS_24H:
