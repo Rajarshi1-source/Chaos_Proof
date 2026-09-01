@@ -14,7 +14,7 @@ EVIDENCE_PORT    := 5433
 POSTGRES_IMAGE   := postgres:18.6-alpine
 SERVICES         := order-api payment-service inventory-service
 
-.PHONY: bootstrap kind-up evidence-up evidence-backup target-app load load-stop experiment score unit ci-gate dashboard dashboard-dev dashboard-verify bisect kind-down
+.PHONY: bootstrap kind-up evidence-up evidence-migrate evidence-backup target-app load load-stop experiment score unit ci-gate dashboard dashboard-dev dashboard-verify bisect kind-down
 
 bootstrap:      ## Everything from nothing: cluster + platform + evidence store + app + load
 	$(MAKE) kind-up
@@ -53,6 +53,18 @@ evidence-up:    ## Evidence store: postgres 18.6 + migrations (idempotent)
 	until docker exec $(EVIDENCE_CONTAINER) pg_isready -U chaosproof >/dev/null 2>&1; do sleep 2; done
 	for m in migrations/*.sql; do echo "applying $$m"; docker exec -i $(EVIDENCE_CONTAINER) psql -q -U chaosproof -d chaosproof -v ON_ERROR_STOP=1 < $$m; done
 	@echo "evidence store ready on localhost:$(EVIDENCE_PORT)"
+
+evidence-migrate: ## Apply migrations to the RUNNING evidence store, without recreating it
+	@# Non-destructive sibling of evidence-up. That target opens with
+	@# `docker rm -f`, which is a strong disincentive to run it routinely - and
+	@# that is exactly how 005_phase12_bisection.sql sat unapplied while the
+	@# code that INSERTs into `bisections` was already committed and pushed.
+	@# Every migration is idempotent (CREATE TABLE/INDEX IF NOT EXISTS, ADD
+	@# COLUMN IF NOT EXISTS), so re-applying the whole set is a no-op.
+	docker start $(EVIDENCE_CONTAINER) >/dev/null 2>&1 || true
+	until docker exec $(EVIDENCE_CONTAINER) pg_isready -U chaosproof >/dev/null 2>&1; do sleep 2; done
+	for m in migrations/*.sql; do echo "applying $$m"; docker exec -i $(EVIDENCE_CONTAINER) psql -q -U chaosproof -d chaosproof -v ON_ERROR_STOP=1 < $$m; done
+	@echo "migrations applied to the running evidence store"
 
 evidence-backup: ## pg_dump the evidence store. Losing it costs the whole resilience history.
 	mkdir -p backups

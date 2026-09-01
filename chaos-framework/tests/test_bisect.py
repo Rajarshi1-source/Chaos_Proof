@@ -358,3 +358,99 @@ def test_render_marks_an_overridden_window():
     out = _bisect(shas, ramp(shas, {27: 0.71}, 0.87), now=DAY,
                   allow_outside_window=True).render()
     assert "[OVERRIDDEN]" in out
+
+
+# --------------------------------------------------------------------------- #
+# The INSERT and the migration, pinned against each other.
+#
+# `store.record()` hand-writes a 19-column INSERT against a hand-written
+# CREATE TABLE. A typo in either only surfaces against a live database, and the
+# job that would catch it (`chaos-gate`) needs a runner most forks do not have -
+# so in practice it surfaces when someone runs a real bisection.
+#
+# This is not hypothetical. migration 005 was committed and pushed in Phase 12
+# and then sat UNAPPLIED on the local evidence store, because the only way to
+# apply it was `make evidence-up`, which destroys and recreates the container.
+# `make evidence-migrate` now exists for that; these tests cover the other half,
+# which is the two files drifting apart.
+# --------------------------------------------------------------------------- #
+
+import pathlib as _pathlib
+import re as _re
+
+_ROOT = _pathlib.Path(__file__).resolve().parents[2]
+_MIGRATION = (_ROOT / "migrations" / "005_phase12_bisection.sql").read_text(encoding="utf-8")
+_STORE = (_ROOT / "chaos-framework" / "src" / "bisect" / "store.py").read_text(encoding="utf-8")
+
+
+def _insert_columns() -> list[str]:
+    """Column list from store.record()'s INSERT."""
+    m = _re.search(r"INSERT INTO bisections\s*\((.*?)\)\s*VALUES", _STORE, _re.S)
+    assert m, "could not find the INSERT INTO bisections statement"
+    return [c.strip() for c in m.group(1).replace("\n", " ").split(",") if c.strip()]
+
+
+def _migration_columns() -> list[str]:
+    """Column names from the CREATE TABLE, excluding table-level constraints."""
+    m = _re.search(r"CREATE TABLE IF NOT EXISTS bisections \((.*?)\n\);", _MIGRATION, _re.S)
+    assert m, "could not find CREATE TABLE bisections"
+    cols = []
+    for line in m.group(1).splitlines():
+        line = line.strip()
+        if not line or line.startswith("--"):
+            continue
+        name = line.split()[0]
+        if name.upper() in {"PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "CONSTRAINT"}:
+            continue
+        cols.append(name)
+    return cols
+
+
+def test_every_inserted_column_exists_in_the_migration():
+    missing = [c for c in _insert_columns() if c not in _migration_columns()]
+    assert not missing, (
+        f"store.record() inserts columns the migration does not define: {missing}")
+
+
+def test_the_insert_arity_matches_its_placeholders():
+    """The likeliest hand-editing error: a column added to the list without a
+    matching %s, which fails only at execution time against a real database."""
+    cols = _insert_columns()
+    m = _re.search(r"VALUES \((.*?)\)\s*\n\s*RETURNING", _STORE, _re.S)
+    assert m, "could not find the VALUES clause"
+    placeholders = m.group(1).count("%s") + m.group(1).count("now()")
+    assert len(cols) == placeholders, (
+        f"{len(cols)} columns but {placeholders} value placeholders")
+
+
+def test_not_null_columns_without_a_default_are_all_inserted():
+    """A NOT NULL column with no DEFAULT that the INSERT omits makes every
+    write fail - the kind of thing noticed only when a bisection is finally run
+    for real, ninety minutes in."""
+    body = _re.search(r"CREATE TABLE IF NOT EXISTS bisections \((.*?)\n\);",
+                      _MIGRATION, _re.S).group(1)
+    required = []
+    for line in body.splitlines():
+        line = line.strip().rstrip(",")
+        if not line or line.startswith("--"):
+            continue
+        name = line.split()[0]
+        if name.upper() in {"PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "CONSTRAINT"}:
+            continue
+        if "NOT NULL" in line.upper() and "DEFAULT" not in line.upper():
+            required.append(name)
+    missing = [c for c in required if c not in _insert_columns()]
+    assert not missing, f"NOT NULL columns never inserted: {missing}"
+
+
+def test_the_check_constraint_admits_every_outcome_the_runner_can_produce():
+    """`abandoned` and `refused` are first-class results, not error states. A
+    CHECK that admitted only `found` would reject exactly the outcomes this
+    feature exists to record."""
+    m = _re.search(r"outcome\s+TEXT NOT NULL CHECK \(outcome IN \((.*?)\)\)",
+                   _MIGRATION, _re.S)
+    assert m, "could not find the outcome CHECK constraint"
+    allowed = set(_re.findall(r"'([a-z]+)'", m.group(1)))
+    emitted = {B.FOUND, B.ABANDONED, B.REFUSED}
+    assert emitted <= allowed, (
+        f"runner can emit outcomes the CHECK rejects: {emitted - allowed}")
