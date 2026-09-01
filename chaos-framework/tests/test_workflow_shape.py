@@ -8,6 +8,7 @@ producing a green badge over an unmeasured run.
 """
 
 import pathlib
+import re
 
 import pytest
 import yaml
@@ -320,6 +321,63 @@ def test_no_workflow_step_installs_the_wrong_distribution(workflow):
                 assert " celpy" not in run, (
                     "the distribution is `cel-python`; `pip install celpy` "
                     "installs an unrelated project")
+
+
+def _pip_install_commands(dockerfile: pathlib.Path) -> list[str]:
+    r"""Logical `pip install` commands, with `\` continuations joined.
+
+    Scanning line by line does not work here, and the failure is silent: the
+    package list wraps onto a continuation line containing no "pip install"
+    text, so a per-line guard skips exactly the line the packages are on. The
+    first version of this helper did that, passed, and would have missed the
+    very `celpy` it was written to catch. Joining first is the whole point.
+    """
+    text = re.sub(r"\\\s*\r?\n", " ", dockerfile.read_text(encoding="utf-8"))
+    out = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or "pip install" not in stripped:
+            continue
+        out.append(stripped)
+    return out
+
+
+def _dockerfiles() -> list[pathlib.Path]:
+    root = pathlib.Path(__file__).resolve().parents[2]
+    return [d for d in root.glob("**/Dockerfile")
+            if "node_modules" not in d.parts and ".next" not in d.parts]
+
+
+def test_no_dockerfile_installs_the_wrong_distribution():
+    """The same check as above, against the IMAGE.
+
+    d382314 fixed `celpy` -> `cel-python` in the workflow and added the guard
+    above, but that guard only reads `workflow["jobs"]`. The Dockerfile kept the
+    wrong distribution and shipped it in the signed image, where policy.py fails
+    closed and denies all nine safety rules at runtime while CI stays green —
+    invisible precisely because fail-closed looks like working software right up
+    until something needs to be allowed.
+
+    A guard covering one of the two places a dependency is named is a guard that
+    teaches you the bug is fixed.
+    """
+    assert _dockerfiles(), "no Dockerfile found - this guard would be vacuous"
+    for dockerfile in _dockerfiles():
+        for cmd in _pip_install_commands(dockerfile):
+            assert '"celpy' not in cmd and " celpy" not in cmd, (
+                f"{dockerfile.name} installs `celpy`; the distribution is "
+                f"`cel-python` and `celpy` is a different project on PyPI")
+
+
+def test_the_cel_evaluator_is_installed_wherever_policy_is_evaluated():
+    """The image evaluates the CEL policy at runtime, so it needs the evaluator
+    as much as the policy-eval CI job does."""
+    root = pathlib.Path(__file__).resolve().parents[2]
+    cmds = _pip_install_commands(root / "Dockerfile")
+    assert cmds, "no pip install found in the Dockerfile"
+    assert any("cel-python" in c for c in cmds), (
+        "the image never installs cel-python, so policy.py fails closed at "
+        "runtime and every safety rule denies")
 
 
 def test_the_job_running_policy_eval_installs_the_policy_extra(workflow):

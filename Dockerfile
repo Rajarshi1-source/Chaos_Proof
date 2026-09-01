@@ -19,8 +19,14 @@ WORKDIR /app
 
 # Dependencies first so a source-only change does not re-resolve the world.
 COPY chaos-framework/pyproject.toml ./chaos-framework/pyproject.toml
+# `cel-python`, NOT `celpy`. The distribution is `cel-python`; `celpy` is only
+# the import name, and a different project owns it on PyPI. Installing the wrong
+# one leaves policy.py on its fail-closed path, where all nine safety rules deny
+# - including their must-allow cases. d382314 fixed that in the workflow and
+# added a guard test, but the guard only read the workflow, so THIS line kept
+# the bug and shipped it in the signed image.
 RUN pip install --no-cache-dir "requests>=2.32" "psycopg[binary]>=3.2" "pyyaml>=6.0" \
-        "fastapi>=0.128" "uvicorn>=0.40" "celpy>=0.3"
+        "fastapi>=0.128" "uvicorn>=0.40" "cel-python>=0.5"
 
 # The framework, plus the three things it reads at runtime as DATA rather than
 # code: the experiment specs, the CEL safety policy, and the load profiles.
